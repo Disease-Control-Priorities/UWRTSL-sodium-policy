@@ -1,0 +1,8 @@
+.Rhistory
+*.html
+
+data/raw/**/*.*
+!data/raw/**/*.md
+
+
+.Rproj.user
