@@ -1,8 +1,19 @@
+# Ignore R history
 .Rhistory
+
+# Ignore all HTML files
 *.html
 
+# Ignore everything in data/raw except markdown
 data/raw/**/*.*
 !data/raw/**/*.md
 
-
+# Ignore RStudio project user files
 .Rproj.user
+
+# Ignore document formats inside docs/
+docs/**/*.pdf
+docs/**/*.doc
+docs/**/*.docx
+docs/**/*.ppt
+docs/**/*.pptx
