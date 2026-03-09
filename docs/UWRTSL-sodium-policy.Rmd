@@ -218,6 +218,7 @@ ggplot() +
   \item Linear scale-up 2026 $\to$ 2030; held constant 2030--2050
 \end{itemize}
 \end{column}
+\end{columns}
 
 
 # Economic Evaluation
