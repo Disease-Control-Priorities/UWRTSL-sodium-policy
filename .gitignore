@@ -17,3 +17,4 @@ docs/**/*.doc
 docs/**/*.docx
 docs/**/*.ppt
 docs/**/*.pptx.claude/
+.claude/
