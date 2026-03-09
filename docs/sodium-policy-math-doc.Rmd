@@ -10,7 +10,7 @@ output:
 
 ## Abstract
 
-This document describes a sodium-only population health model for cardiovascular disease prevention. The model links sodium policy packages to changes in mean sodium intake, converts sodium reduction into systolic blood pressure reduction using dose--response estimates, and then projects cause-specific changes in incidence through ETIHAD-based effect sizes embedded in a proportional multistate life table. The implementation excludes antihypertensive treatment scale-up, trans fat policies, and statin interventions.
+This document describes a sodium-only population health model for cardiovascular disease prevention. The model links sodium policy packages to changes in mean sodium intake, converts sodium reduction into systolic blood pressure reduction using dose--response estimates, and then projects cause-specific changes in incidence through Ettehad-based effect sizes embedded in a proportional multistate life table. The implementation excludes antihypertensive treatment scale-up, trans fat policies, and statin interventions.
 
 # Model Overview
 
@@ -67,7 +67,7 @@ For each age-sex-year-location cell, the model uses:
 
 - $S_{a,s,\ell,t}$: baseline mean sodium intake in grams per day,
 - $RBP_{a,s,\ell,t}$: indicator or share for raised blood pressure,
-- $D_{a,s,b,\ell,t}$: diabetes prevalence used for diabetes-weighted ETIHAD effects.
+- $D_{a,s,b,\ell,t}$: diabetes prevalence used for diabetes-weighted Ettehad effects.
 
 Baseline sodium intake is read from the country-specific sodium scenario file and merged into the blood-pressure input table.
 
@@ -266,13 +266,13 @@ $$
 IR^{bin}_{b,a,s,c,\ell,t} = \frac{RR^{GBD}_{b,a,c} \times IR_{a,s,c,\ell,t}}{\alpha_{a,s,c,\ell,t}}
 $$
 
-# ETIHAD Effect Sizes
+# Ettehad Effect Sizes
 
-## Cause-specific ETIHAD parameters
+## Cause-specific Ettehad parameters
 
-The model uses ETIHAD-based relative-risk reductions per 10 mmHg systolic BP reduction. These are stored by cause and BP category.
+The model uses Ettehad-based relative-risk reductions per 10 mmHg systolic BP reduction. These are stored by cause and BP category.
 
-A separate lookup table of cumulative ETIHAD effect sizes distinguishes individuals with and without diabetes.
+A separate lookup table of cumulative Ettehad effect sizes distinguishes individuals with and without diabetes.
 
 ## Diabetes-weighted cumulative effect
 
@@ -294,13 +294,13 @@ This object is constructed in the helper function `calculate_etihad_cumulative_r
 
 ## Incidence reduction within a BP bin
 
-After merging ETIHAD parameters into the baseline incidence table, the sodium-induced effect in each bin is computed as a linear proportion of the 10 mmHg effect size:
+After merging Ettehad parameters into the baseline incidence table, the sodium-induced effect in each bin is computed as a linear proportion of the 10 mmHg effect size:
 
 $$
-E^{sodium}_{b,a,s,c,\ell,t} = (1 - RR^{ETIHAD}_{b,c}) \times 0.1 \times \Delta SBP_{a,s,\ell,t}
+E^{sodium}_{b,a,s,c,\ell,t} = (1 - RR^{Ettehad}_{b,c}) \times 0.1 \times \Delta SBP_{a,s,\ell,t}
 $$
 
-where $RR^{ETIHAD}_{b,c}$ is the ETIHAD relative risk per 10 mmHg reduction.
+where $RR^{Ettehad}_{b,c}$ is the Ettehad relative risk per 10 mmHg reduction.
 
 The new bin-specific incidence is:
 

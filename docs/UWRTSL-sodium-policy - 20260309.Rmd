@@ -2,7 +2,7 @@
 title: "Health and Economic Returns to Dietary Sodium Reduction"
 subtitle: "A national-scale cardiovascular disease modeling and benefit--cost analysis"
 author: "Resolve to Save Lives (RTSL) -- UW"
-date: ""
+date: "`r format(Sys.Date(), '%B %Y')`"
 output:
   beamer_presentation:
     latex_engine: xelatex
@@ -106,7 +106,7 @@ knitr::opts_chunk$set(
   - **K**nowledge (consumer information)
   - **E**nvironments (healthier food settings)
 - The largest and most sustained sodium reductions occur when SHAKE components are implemented as a package.
-- This project explicitly models and costs realistic SHAKE policy bundles.
+- This project seek to model and cost realistic SHAKE policy bundles aligned with RTSL country priorities.
 
 ## Sodium and Potassium: Complementary Strategies for BP Control
 
@@ -125,6 +125,28 @@ knitr::opts_chunk$set(
 **Common Policy Approaches**
 
 - Promotion of whole, minimally processed foods (fruits, vegetables, legumes) that are naturally high in potassium and low in sodium.
+
+## Scenario Definitions and Default Efficacies
+
+\footnotesize
+
+Five scenarios; $q_{\text{pkgd}} = q_{\text{outside}} = 30\%$; $u_p = \$0.05$ per component; scale-up 2026--2030.
+
+\medskip
+\begin{tabular}{lcc}
+\toprule
+\textbf{Scenario} & \textbf{Active policies} & \textbf{$\eta$ (salteff)} \\
+\midrule
+Baseline                  & none             & 0 \\
+Reformulation -- mandatory & reform only      & $0.20 \times 0.30 = 0.060$ \\
+Reformulation -- voluntary & reform only      & $0.15 \times 0.30 = 0.045$ \\
+Full package -- mandatory  & reform + label + media + support & $0.060+0.030+0.100+0.060 = 0.250$ \\
+Full package -- voluntary  & reform + label + media + support & $0.045+0.030+0.100+0.060 = 0.235$ \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Per-capita annual costs: \$0.05 (reformulation-only) to \$0.20 (full 4-component package).
 
 # Data Sources
 
@@ -207,149 +229,6 @@ ggplot() +
 
 \small \textbf{Key:} $\varepsilon_{IR}$, $\varepsilon_{CF}$ = multiplicative effect ratios from the intervention module $\cdot$ BG.mx = background mortality $\cdot$ COVID-19 excess mortality applied 2020--2021 only
 
-## CVD Modeling Engine
-
-\justifying
-
-- Population cohort model linking sodium intake to blood pressure and cardiovascular outcomes.
-- Uses country-specific baseline CVD incidence, mortality, and population age structure.
-- Policy scenarios translate sodium reductions into blood pressure changes using established dose--response relationships.
-- Resulting changes in heart attacks, strokes, and CVD deaths are projected over time.
-
-
-## Modeling Assumptions
-
-\begin{columns}[T]
-\begin{column}{0.47\textwidth}
-\textbf{Model structure}
-\begin{itemize}\footnotesize
-  \item Discrete-time annual step (2019--2050); ages 20--95
-  \item Four causes modeled independently
-  \item COVID-19 excess mortality applied 2020--2021 only; no long-term effects
-\end{itemize}
-
-\medskip
-\textbf{Intervention mechanics}
-\begin{itemize}\footnotesize
-  \item Linear scale-up 2026 $\to$ 2030; held constant 2030--2050
-\end{itemize}
-\end{column}
-\end{columns}
-
-
-# Economic Evaluation
-
-## Health and Economic Benefits Estimation
-
-\justifying
-
-- Reduced sodium intake leads to fewer cardiovascular events and premature deaths.
-- Health outcomes are summarized as deaths and DALYs averted.
-- Health gains are monetized using the standard economic valuation of mortality risk reduction.
-- Averted health-care expenditures are estimated and included as additional economic benefits.
-
-## Costing the SHAKE Policy Package
-
-\justifying
-
-- Costs are estimated using an ingredients-based regulatory costing approach.
-- Government costs include policy design, administration, monitoring, and enforcement.
-- Industry costs include reformulation, testing, and labeling compliance, counted as real resource costs.
-- Both start-up and ongoing recurrent costs are explicitly modeled over time.
-
-## Costing the SHAKE Policy Package (Example)
-
-\scriptsize
-
-\begin{tabular}{p{2.2cm} p{3.1cm} p{1.7cm} p{1.6cm} p{1.8cm} p{2.3cm}}
-\toprule
-\textbf{SHAKE Component} & \textbf{Activity} & \textbf{Cost Category} & \textbf{Frequency} & \textbf{Coverage} & \textbf{Cost Bearer} \\
-\midrule
-S -- Surveillance & Population sodium survey & Program & Every 3--5 yrs & National & Government \\
-S -- Surveillance & Food sodium monitoring & Program & Annual & Processed foods & Government \\
-H -- Harness Industry & Set reformulation targets & Program & One-off & Key food categories & Government \\
-H -- Harness Industry & Product reformulation & Compliance & One-off + transition & Affected SKUs & Industry \\
-A -- Labeling & Front-of-pack labeling policy & Program & One-off & National & Government \\
-A -- Labeling & Label changes & Compliance & One-off & Affected SKUs & Industry \\
-K -- Knowledge & Mass media campaign & Program & Annual & Population reached & Government \\
-E -- Environment & School meal standards & Program & Annual & Schools & Government \\
-E -- Environment & Institutional food reformulation & Compliance & One-off + annual & Institutions & Vendors \\
-\bottomrule
-\end{tabular}
-
-## Full Benefit--Cost Analysis Outputs
-
-\justifying
-
-- Health benefits and implementation costs are combined to estimate net present value.
-- Benefit--cost ratios and return on investment are calculated for each policy scenario.
-- Results allow comparison across individual SHAKE components and bundled strategies.
-- Sensitivity analyses assess robustness to key assumptions and uncertainties.
-
-
-# Decision Tool
-
-## Integrated Web-Based Decision Tool
-
-\justifying
-
-- All modeling and economic components are integrated into an interactive \texttt{R Shiny} web application.
-- Users can customize country-specific inputs, policy coverage, and implementation timelines.
-- The tool enables real-time comparison of alternative policy scenarios and assumptions.
-- Designed to support evidence-based policymaking and stakeholder engagement.
-
-
-# Discussion
-
-## Why This Analysis Matters for RTSL
-
-\justifying
-
-- Provides finance-ministry--ready evidence on the economic value of sodium reduction policies.
-- Strengthens regulatory impact assessments and national investment cases.
-- Supports prioritization of high-return noncommunicable disease prevention strategies.
-- Scalable framework applicable across multiple countries and policy contexts.
-
-## Next Steps
-
-\justifying
-
-- Finalize country-specific data inputs and validate assumptions with national stakeholders.
-- Complete deployment and testing of the interactive web tool.
-- Use results to support policy adoption, financing, and sustained implementation.
-- Position sodium reduction as a high-return national investment in partner countries.
-
-
-<!-- ======================================================================
-     APPENDIX
-     ====================================================================== -->
-
-# Appendix
-
-## Notation: Core Model
-
-\footnotesize
-
-Indices: age $a$, sex $s$, cause $c$, location $\ell$, year $t$, BP category $b$.
-
-\medskip
-\begin{tabular}{ll}
-\toprule
-\textbf{Symbol} & \textbf{Meaning} \\
-\midrule
-$IR_{a,s,c,\ell,t}$ & Baseline cause-specific incidence rate \\
-$CF_{a,s,c,\ell,t}$ & Baseline case fatality rate \\
-$BG.mx_{a,s,c,\ell,t}$ & Background mortality (disease state) \\
-$BG.mx.all_{a,s,\ell,t}$ & All-cause background mortality \\
-$PREVt0 / DIS.mx.t0$ & Baseline prevalence / disease mortality \\
-$N_{a,s,\ell,t}$ & Population size \\
-$P(b \mid a,s,\ell,t)$ & Probability of BP category $b$ \\
-$S_{a,s,\ell,t}$ & Baseline mean sodium intake (g/day) \\
-$RBP_{a,s,\ell,t}$ & Share of population with raised BP \\
-$D_{a,s,b,\ell,t}$ & Diabetes prevalence \\
-\bottomrule
-\end{tabular}
-
 ## Policy Package: Efficacy
 
 \footnotesize
@@ -418,6 +297,118 @@ S_{a,s,\ell,t} - 2 & \text{if } S - \Delta S^{*} < 2 \\
 \Delta S^{*}_{a,s,\ell,t} & \text{otherwise}
 \end{cases}
 $$
+
+
+# Economic Evaluation
+
+## Health and Economic Benefits Estimation
+
+\justifying
+
+- Reduced sodium intake leads to fewer cardiovascular events and premature deaths.
+- Health outcomes are summarized as deaths and DALYs averted.
+- Health gains are monetized using the standard economic valuation of mortality risk reduction.
+- Averted health-care expenditures are estimated and included as additional economic benefits.
+
+## Costing the SHAKE Policy Package
+
+\justifying
+
+- Costs are estimated using an ingredients-based regulatory costing approach.
+- Government costs include policy design, administration, monitoring, and enforcement.
+- Industry costs include reformulation, testing, and labeling compliance, counted as real resource costs.
+- Both start-up and ongoing recurrent costs are explicitly modeled over time.
+
+## Costing the SHAKE Policy Package (Example)
+
+\scriptsize
+
+\begin{tabular}{p{2.2cm} p{3.1cm} p{1.7cm} p{1.6cm} p{1.8cm} p{2.3cm}}
+\toprule
+\textbf{SHAKE Component} & \textbf{Activity} & \textbf{Cost Category} & \textbf{Frequency} & \textbf{Coverage} & \textbf{Cost Bearer} \\
+\midrule
+S -- Surveillance & Population sodium survey & Program & Every 3--5 yrs & National & Government \\
+S -- Surveillance & Food sodium monitoring & Program & Annual & Processed foods & Government \\
+H -- Harness Industry & Set reformulation targets & Program & One-off & Key food categories & Government \\
+H -- Harness Industry & Product reformulation & Compliance & One-off + transition & Affected SKUs & Industry \\
+A -- Labeling & Front-of-pack labeling policy & Program & One-off & National & Government \\
+A -- Labeling & Label changes & Compliance & One-off & Affected SKUs & Industry \\
+K -- Knowledge & Mass media campaign & Program & Annual & Population reached & Government \\
+E -- Environment & School meal standards & Program & Annual & Schools & Government \\
+E -- Environment & Institutional food reformulation & Compliance & One-off + annual & Institutions & Vendors \\
+\bottomrule
+\end{tabular}
+
+## Full Benefit--Cost Analysis Outputs
+
+\justifying
+
+- Health benefits and implementation costs are combined to estimate net present value.
+- Benefit--cost ratios and return on investment are calculated for each policy scenario.
+- Results allow comparison across individual SHAKE components and bundled strategies.
+- Sensitivity analyses assess robustness to key assumptions and uncertainties.
+
+
+# Decision Tool
+
+## Integrated Web-Based Decision Tool
+
+\justifying
+
+- All modeling and economic components are integrated into an interactive \texttt{R Shiny} web application.
+- Users can customize country-specific inputs, policy coverage, and implementation timelines.
+- The tool enables real-time comparison of alternative policy scenarios and assumptions.
+- Designed to support evidence-based policymaking and stakeholder engagement.
+
+
+# Discussion
+
+## Pending Decisions
+
+\justifying
+
+- Provides finance-ministry--ready evidence on the economic value of sodium reduction policies.
+- Strengthens regulatory impact assessments and national investment cases.
+- Supports prioritization of high-return noncommunicable disease prevention strategies.
+- Scalable framework applicable across multiple countries and policy contexts.
+
+## Next Steps
+
+\justifying
+
+- Finalize country-specific data inputs and validate assumptions with national stakeholders.
+- Re-design the interactive Shiny web tool.
+
+
+<!-- ======================================================================
+     APPENDIX
+     ====================================================================== -->
+
+# Appendix
+
+## Notation: Core Model
+
+\footnotesize
+
+Indices: age $a$, sex $s$, cause $c$, location $\ell$, year $t$, BP category $b$.
+
+\medskip
+\begin{tabular}{ll}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+$IR_{a,s,c,\ell,t}$ & Baseline cause-specific incidence rate \\
+$CF_{a,s,c,\ell,t}$ & Baseline case fatality rate \\
+$BG.mx_{a,s,c,\ell,t}$ & Background mortality (disease state) \\
+$BG.mx.all_{a,s,\ell,t}$ & All-cause background mortality \\
+$PREVt0 / DIS.mx.t0$ & Baseline prevalence / disease mortality \\
+$N_{a,s,\ell,t}$ & Population size \\
+$P(b \mid a,s,\ell,t)$ & Probability of BP category $b$ \\
+$S_{a,s,\ell,t}$ & Baseline mean sodium intake (g/day) \\
+$RBP_{a,s,\ell,t}$ & Share of population with raised BP \\
+$D_{a,s,b,\ell,t}$ & Diabetes prevalence \\
+\bottomrule
+\end{tabular}
 
 ## Scale-Up Time Path
 
@@ -569,25 +560,4 @@ $$
 \textbf{Initial conditions} ($t=t_0$ or $a=20$):
 $\;Sick_0 = N \cdot PREVt0;\; Dead_0 = N \cdot DIS.mx.t0;\; Well_0 = N(1-PREVt0-BG.mx)$
 
-## Scenario Definitions and Default Efficacies
-
-\footnotesize
-
-Five scenarios; $q_{\text{pkgd}} = q_{\text{outside}} = 30\%$; $u_p = \$0.05$ per component; scale-up 2026--2030.
-
-\medskip
-\begin{tabular}{lcc}
-\toprule
-\textbf{Scenario} & \textbf{Active policies} & \textbf{$\eta$ (salteff)} \\
-\midrule
-Baseline                  & none             & 0 \\
-Reformulation -- mandatory & reform only      & $0.20 \times 0.30 = 0.060$ \\
-Reformulation -- voluntary & reform only      & $0.15 \times 0.30 = 0.045$ \\
-Full package -- mandatory  & reform + label + media + support & $0.060+0.030+0.100+0.060 = 0.250$ \\
-Full package -- voluntary  & reform + label + media + support & $0.045+0.030+0.100+0.060 = 0.235$ \\
-\bottomrule
-\end{tabular}
-
-\medskip
-Per-capita annual costs: \$0.05 (reformulation-only) to \$0.20 (full 4-component package).
 
