@@ -1,0 +1,467 @@
+---
+title: "Mathematical Description: Sodium Policy Intervention Model"
+author: "Sodium Reduction Model Documentation"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  word_document:
+    toc: true
+    number_sections: true
+---
+
+## Abstract
+
+This document describes a sodium-only population health model for cardiovascular disease prevention. The model links sodium policy packages to changes in mean sodium intake, converts sodium reduction into systolic blood pressure reduction using dose--response estimates, and then projects cause-specific changes in incidence through ETIHAD-based effect sizes embedded in a proportional multistate life table. The implementation excludes antihypertensive treatment scale-up, trans fat policies, and statin interventions.
+
+# Model Overview
+
+The model has four integrated layers:
+
+1. **Policy layer**: defines sodium policy packages, their efficacy, and per-capita programme costs.
+2. **Exposure layer**: maps policy efficacy into reductions in average sodium intake.
+3. **Epidemiological layer**: converts sodium reduction into systolic blood pressure reduction and then into lower cardiovascular incidence.
+4. **State-transition layer**: propagates the modified incidence rates through a population model over time.
+
+The modeled causes are:
+
+- ischemic heart disease (IHD)
+- hypertensive heart disease (HHD)
+- ischemic stroke
+- hemorrhagic stroke
+
+# Scope and Design Choices
+
+This documentation reflects the sodium-policy version of the model with the following restrictions:
+
+- only sodium reduction is modeled;
+- no antihypertensive treatment scale-up is included;
+- no trans fat elimination is included;
+- no statin uptake is included;
+- intervention effects operate through incidence reduction only;
+- case fatality remains unchanged under sodium reduction.
+
+# Data Inputs
+
+## Baseline epidemiological inputs
+
+For age $a$, sex $s$, cause $c$, location $\ell$, and year $t$, the model uses:
+
+- $IR_{a,s,c,\ell,t}$: baseline incidence rate,
+- $CF_{a,s,c,\ell,t}$: baseline case fatality rate,
+- $BG.mx_{a,s,c,\ell,t}$: background mortality in the disease state,
+- $BG.mx.all_{a,s,\ell,t}$: all-cause background mortality,
+- $PREVt0_{a,s,c,\ell}$: baseline prevalence,
+- $DIS.mx.t0_{a,s,c,\ell}$: baseline disease mortality,
+- $N_{a,s,\ell,t}$: population size.
+
+## Blood pressure distribution inputs
+
+The blood pressure distribution is represented over the following categories:
+
+`<120, 120-129, 130-139, 140-149, 150-159, 160-169, 170-179, 180+`
+
+Let $P(b \mid a,s,\ell,t)$ denote the probability of BP category $b$.
+
+## Sodium exposure inputs
+
+For each age-sex-year-location cell, the model uses:
+
+- $S_{a,s,\ell,t}$: baseline mean sodium intake in grams per day,
+- $RBP_{a,s,\ell,t}$: indicator or share for raised blood pressure,
+- $D_{a,s,b,\ell,t}$: diabetes prevalence used for diabetes-weighted ETIHAD effects.
+
+Baseline sodium intake is read from the country-specific sodium scenario file and merged into the blood-pressure input table.
+
+# Policy Package Definition
+
+## Policy components
+
+The sodium policy package includes up to five components:
+
+- Reformulation
+- Package labelling
+- Media campaigns
+- Supportive environment
+- Other
+
+## Policy efficacy
+
+Let $e_p$ denote the efficacy contribution of policy component $p$. The model defines these as:
+
+$$
+e_{\text{reform}} = r \times q_{\text{packaged}}
+$$
+
+$$
+e_{\text{label}} = 0.10 \times q_{\text{packaged}}
+$$
+
+$$
+e_{\text{media}} = 0.10
+$$
+
+$$
+e_{\text{support}} = 0.20 \times q_{\text{outside}}
+$$
+
+$$
+e_{\text{other}} = q_{\text{other}}
+$$
+
+where:
+
+- $r = 0.20$ under **mandatory** reformulation and $r = 0.15$ under **voluntary** reformulation,
+- $q_{\text{packaged}}$ is the share of sodium from packaged/processed food,
+- $q_{\text{outside}}$ is the share of sodium from out-of-home food sources,
+- $q_{\text{other}}$ is the efficacy of any optional residual policy.
+
+The total efficacy of a selected package is:
+
+$$
+\eta = \sum_{p \in \mathcal{P}} e_p
+$$
+
+where $\mathcal{P}$ is the set of active policies. In the code, this quantity is passed forward as `salteff`.
+
+## Policy costs
+
+Each policy component has an annual per-capita cost $u_p$. Total annual per-capita policy cost is:
+
+$$
+u = \sum_{p \in \mathcal{P}} u_p
+$$
+
+If $Pop_{\ell,t}$ is the target population, annual programme cost is scaled up linearly from the start year to the implementation year and then held constant:
+
+For $t_{0} \le t < t_{1}$,
+
+$$
+Cost_{\ell,t} = \frac{Pop_{\ell,t}}{4} \times \nu \times Ex \times \frac{t - t_0 + 1}{t_1 - t_0 + 1}
+$$
+
+For $t \ge t_{1}$,
+
+$$
+Cost_{\ell,t} = \frac{Pop_{\ell,t}}{4} \times \nu \times Ex
+$$
+
+where $Ex$ is an optional exchange-rate multiplier.
+
+# Sodium Intake Reduction
+
+Given baseline sodium intake $S_{a,s,\ell,t}$ and package efficacy $\eta$, the model computes the target sodium reduction according to one of three methods.
+
+## Percent reduction
+
+For the main policy implementation used in the scenario runner:
+
+$$
+\Delta S^{*}_{a,s,\ell,t} = S_{a,s,\ell,t} \times \eta
+$$
+
+## Target-based reduction
+
+If a target sodium level is directly supplied:
+
+$$
+\Delta S^{*}_{a,s,\ell,t} = \min(S_{a,s,\ell,t}, \eta)
+$$
+
+## Absolute app-based reduction
+
+If the intervention is expressed as a fixed gram reduction:
+
+$$
+\Delta S^{*}_{a,s,\ell,t} = \max(0, S_{a,s,\ell,t} - \eta)
+$$
+
+## Minimum intake floor
+
+The model prevents post-intervention sodium intake from falling below 2 g/day. Therefore, the realized reduction is adjusted as:
+
+$$
+\Delta S_{a,s,\ell,t} =
+\begin{cases}
+S_{a,s,\ell,t} - 2, & \text{if } S_{a,s,\ell,t} - \Delta S^{*}_{a,s,\ell,t} < 2 \\
+\Delta S^{*}_{a,s,\ell,t}, & \text{otherwise}
+\end{cases}
+$$
+
+# Time Path of Policy Scale-Up
+
+Let $T_{start}$ be the first implementation year and $T_{full}$ the year of full implementation. The sodium reduction is scaled up linearly:
+
+For $t < T_{start}$,
+
+$$
+\Delta S^{scale}_{a,s,\ell,t} = 0
+$$
+
+For $T_{start} \le t \le T_{full}$,
+
+$$
+\Delta S^{scale}_{a,s,\ell,t} = \Delta S_{a,s,\ell,t}
+\times
+\frac{t - T_{start} + 1}{T_{full} - T_{start} + 1}
+$$
+
+For $t > T_{full}$,
+
+$$
+\Delta S^{scale}_{a,s,\ell,t} = \Delta S_{a,s,\ell,t}
+$$
+
+# From Sodium Reduction to Blood Pressure Reduction
+
+The model uses a Filippini-style dose--response function to translate sodium reduction into systolic blood pressure reduction.
+
+Let $RBP_{a,s,\ell,t}$ denote the raised-BP indicator or fraction. Then:
+
+$$
+\Delta SBP_{a,s,\ell,t} = \left(2.8 \times RBP_{a,s,\ell,t} + 1.0 \times (1 - RBP_{a,s,\ell,t})\right) \times \Delta S^{scale}_{a,s,\ell,t}
+$$
+
+Thus, each gram of sodium reduction lowers systolic BP by:
+
+- 2.8 mmHg among those with raised BP,
+- 1.0 mmHg among those without raised BP.
+
+# Baseline Incidence by Blood Pressure Category
+
+## GBD relative risks
+
+The model first reconstructs baseline bin-specific incidence using GBD relative risks per 10 mmHg systolic BP increase.
+
+Let $RR^{GBD}_{b,a,c}$ denote the relative risk for BP bin $b$, age $a$, and cause $c$. If $m_b$ is the midpoint systolic BP of category $b$, then:
+
+$$
+RR^{GBD}_{b,a,c} = \left(RR^{10}_{a,c}\right)^{(m_b - 120)/10}
+$$
+
+for categories above 120 mmHg, with the reference category fixed at 1 below 120 mmHg.
+
+The bin midpoints used are:
+
+- $110$ for $<120$
+- $125$ for $120$--$129$
+- $135$ for $130$--$139$
+- $145$ for $140$--$149$
+- $155$ for $150$--$159$
+- $165$ for $160$--$169$
+- $175$ for $170$--$179$
+- $185$ for $180+$
+
+## Normalization factor
+
+To ensure consistency with the observed aggregate incidence, the model computes:
+
+$$
+\alpha_{a,s,c,\ell,t} = \sum_b P(b \mid a,s,\ell,t) \times RR^{GBD}_{b,a,c}
+$$
+
+## Bin-specific baseline incidence
+
+Baseline incidence in each BP category is then:
+
+$$
+IR^{bin}_{b,a,s,c,\ell,t} = \frac{RR^{GBD}_{b,a,c} \times IR_{a,s,c,\ell,t}}{\alpha_{a,s,c,\ell,t}}
+$$
+
+# ETIHAD Effect Sizes
+
+## Cause-specific ETIHAD parameters
+
+The model uses ETIHAD-based relative-risk reductions per 10 mmHg systolic BP reduction. These are stored by cause and BP category.
+
+A separate lookup table of cumulative ETIHAD effect sizes distinguishes individuals with and without diabetes.
+
+## Diabetes-weighted cumulative effect
+
+For BP category $b$ and cause $c$, let:
+
+- $E^{ND}_{b,c}$ be the no-diabetes effect size,
+- $E^{D}_{b,c}$ be the diabetes-specific effect size,
+- $w_{a,s,b,\ell,t}$ be the diabetes prevalence in that subgroup.
+
+Then the diabetes-weighted cumulative effect is:
+
+$$
+E_{b,c,a,s,\ell,t} = (1 - w_{a,s,b,\ell,t}) E^{ND}_{b,c} + w_{a,s,b,\ell,t} E^{D}_{b,c}
+$$
+
+This object is constructed in the helper function `calculate_etihad_cumulative_rr()`.
+
+# Effect of Sodium Reduction on Incidence
+
+## Incidence reduction within a BP bin
+
+After merging ETIHAD parameters into the baseline incidence table, the sodium-induced effect in each bin is computed as a linear proportion of the 10 mmHg effect size:
+
+$$
+E^{sodium}_{b,a,s,c,\ell,t} = (1 - RR^{ETIHAD}_{b,c}) \times 0.1 \times \Delta SBP_{a,s,\ell,t}
+$$
+
+where $RR^{ETIHAD}_{b,c}$ is the ETIHAD relative risk per 10 mmHg reduction.
+
+The new bin-specific incidence is:
+
+$$
+IR^{bin,new}_{b,a,s,c,\ell,t} = IR^{bin}_{b,a,s,c,\ell,t} \times (1 - E^{sodium}_{b,a,s,c,\ell,t})
+$$
+
+## Population-weighted new incidence
+
+The modified incidence rate at the age-sex-cause-year level is then:
+
+$$
+IR^{new}_{a,s,c,\ell,t} = \sum_b IR^{bin,new}_{b,a,s,c,\ell,t} \times P(b \mid a,s,\ell,t)
+$$
+
+For years before implementation begins, the model sets:
+
+$$
+IR^{new}_{a,s,c,\ell,t} = IR_{a,s,c,\ell,t}
+$$
+
+## Incidence effect ratio
+
+The incidence effect ratio carried into the life table is:
+
+$$
+\varepsilon^{IR}_{a,s,c,\ell,t} = \frac{IR^{new}_{a,s,c,\ell,t}}{IR_{a,s,c,\ell,t}}
+$$
+
+# Case Fatality Assumption
+
+Unlike the antihypertensive-treatment version of the model, the sodium-policy model does **not** impose a secondary effect on case fatality. Therefore:
+
+$$
+CF^{new}_{a,s,c,\ell,t} = CF_{a,s,c,\ell,t}
+$$
+
+and
+
+$$
+\varepsilon^{CF}_{a,s,c,\ell,t} = 1
+$$
+
+# State-Transition Model
+
+The modified incidence and unchanged case fatality rates are passed into a proportional multistate life-table structure.
+
+For each age, sex, cause, location, intervention, and year, the state variables are:
+
+- $Well_{a,s,c,\ell,t}$
+- $Sick_{a,s,c,\ell,t}$
+- $Dead_{a,s,c,\ell,t}$
+- $Pop_{a,s,c,\ell,t}$
+- $NewCases_{a,s,c,\ell,t}$
+
+## Initial conditions
+
+At baseline year or entry age, the model initializes:
+
+$$
+Sick_{a,s,c,\ell,t_0} = N_{a,s,\ell,t_0} \times PREVt0_{a,s,c,\ell}
+$$
+
+$$
+Dead_{a,s,c,\ell,t_0} = N_{a,s,\ell,t_0} \times DIS.mx.t0_{a,s,c,\ell}
+$$
+
+$$
+Well_{a,s,c,\ell,t_0} = N_{a,s,\ell,t_0} \times \left[1 - (PREVt0_{a,s,c,\ell} + BG.mx_{a,s,c,\ell,t_0})\right]
+$$
+
+$$
+Pop_{a,s,c,\ell,t_0} = N_{a,s,\ell,t_0}
+$$
+
+## Annual transitions
+
+For each subsequent year, the model applies:
+
+$$
+NewCases_{a+1,s,c,\ell,t+1} = Well_{a,s,c,\ell,t} \times IR_{a,s,c,\ell,t}
+$$
+
+$$
+Sick_{a+1,s,c,\ell,t+1} = Sick_{a,s,c,\ell,t} \times (1 - CF_{a,s,c,\ell,t} - BG.mx_{a,s,c,\ell,t} - covid.mx_{a,s,c,\ell,t}) + Well_{a,s,c,\ell,t} \times IR_{a,s,c,\ell,t}
+$$
+
+$$
+Dead_{a+1,s,c,\ell,t+1} = Sick_{a,s,c,\ell,t} \times CF_{a,s,c,\ell,t}
+$$
+
+$$
+Pop_{a+1,s,c,\ell,t+1} = Pop_{a,s,c,\ell,t} - all.mx_{a,s,c,\ell,t}
+$$
+
+Disease-specific and background mortality are then aggregated to obtain total mortality, after which the well population is updated residually.
+
+# Scenario Definitions
+
+The code implements five sodium-policy scenarios:
+
+1. **baseline**: no sodium intervention,
+2. **reformulation_mandatory**: reformulation only under mandatory reform,
+3. **reformulation_voluntary**: reformulation only under voluntary reform,
+4. **full_mandatory**: full policy package with mandatory reformulation,
+5. **full_voluntary**: full policy package with voluntary reformulation.
+
+Using the default parameters in the script:
+
+- packaged sodium share = 30%,
+- outside-the-home sodium share = 30%,
+- cost per active policy component = USD 0.05 per capita annually,
+- implementation period = 2026 to 2030.
+
+Under these defaults, the policy efficacies are:
+
+- mandatory reformulation only: $0.20 \times 0.30 = 0.06$,
+- voluntary reformulation only: $0.15 \times 0.30 = 0.045$,
+- full mandatory package: $0.06 + 0.03 + 0.10 + 0.06 = 0.25$,
+- full voluntary package: $0.045 + 0.03 + 0.10 + 0.06 = 0.235$.
+
+# Outputs
+
+For each country and scenario, the model produces annual age-sex-cause outputs for:
+
+- well,
+- sick,
+- newcases,
+- dead,
+- pop,
+- all-cause mortality proxy `all.mx`,
+- intervention label,
+- location,
+- incidence effect ratio `eff_ir`,
+- case-fatality effect ratio `eff_cf`.
+
+Scenario comparisons can then be made using cumulative deaths, cases, or other aggregates relative to the baseline scenario.
+
+# Validation and Checks
+
+The implementation includes automated checks for:
+
+- negative values in state variables,
+- missing values in key outputs,
+- population accounting mismatches,
+- effect ratios outside plausible bounds.
+
+# Summary
+
+This sodium-only model links explicit sodium policy packages to cardiovascular outcomes through the following chain:
+
+$$
+\text{Policy package}
+\rightarrow
+\text{Sodium reduction}
+\rightarrow
+\text{SBP reduction}
+\rightarrow
+\text{Lower incidence}
+\rightarrow
+\text{Population health gains}
+$$
+
+Relative to the broader cardiovascular prevention framework, this version is intentionally restricted to sodium policies and therefore isolates the contribution of dietary sodium reduction while keeping case fatality and all non-sodium interventions fixed.

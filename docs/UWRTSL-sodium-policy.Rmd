@@ -1,7 +1,7 @@
 ---
 title: "Health and Economic Returns to Dietary Sodium Reduction"
 subtitle: "A national-scale cardiovascular disease modeling and benefit--cost analysis"
-author: "Resolve to Save Lives (RTSL)"
+author: "Resolve to Save Lives (RTSL) -- UW"
 date: ""
 output:
   beamer_presentation:
@@ -27,7 +27,17 @@ header-includes:
 fontsize: 11pt
 ---
 
+<!-- ======================================================================
+     SETUP — LOAD ARTEFACTS ONLY (zero recomputation)
+     ====================================================================== -->
+     
 ```{r setup, include=FALSE}
+library(data.table)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(scales)
+
 knitr::opts_chunk$set(
   echo = FALSE,
   message = FALSE,
@@ -37,7 +47,11 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Overview
+<!-- ======================================================================
+     Overview
+     ====================================================================== -->
+
+# Study Overview
 
 ## Project Objective and Policy Impact
 
@@ -47,6 +61,23 @@ knitr::opts_chunk$set(
 - Quantify deaths and cases of ischemic heart disease (IHD), stroke, and hypertensive heart disease, as well as DALYs averted over 2026--2050.
 - Conduct a full economic benefit--cost analysis to support government decision-making.
 - Focus on RTSL partner countries and on policies that governments can realistically implement.
+
+
+## RTSL Sodium Reduction Policy Support
+
+\justifying
+
+- Technical assistance to governments to design and implement mandatory sodium targets for packaged foods.
+- Support for front-of-pack sodium warning labels to inform consumers and incentivize reformulation.
+- Development of nutrition standards for public food procurement in schools, hospitals, and government settings.
+- Assistance with policy drafting, legal design, monitoring systems, and enforcement capacity.
+
+
+<!-- ======================================================================
+     SCENARIOS
+     ====================================================================== -->
+
+# Scenarios
 
 ## WHO SHAKE Strategy: Policy Framework
 
@@ -62,42 +93,103 @@ knitr::opts_chunk$set(
 - The largest and most sustained sodium reductions occur when SHAKE components are implemented as a package.
 - This project explicitly models and costs realistic SHAKE policy bundles.
 
-## RTSL Sodium Reduction Policy Support
-
-\justifying
-
-- Technical assistance to governments to design and implement mandatory sodium targets for packaged foods.
-- Support for front-of-pack sodium warning labels to inform consumers and incentivize reformulation.
-- Development of nutrition standards for public food procurement in schools, hospitals, and government settings.
-- Assistance with policy drafting, legal design, monitoring systems, and enforcement capacity.
-
-## RTSL Sodium Reduction Policy Support: Reference
-
-\centering
-
-\Large \textbf{Background reference}
-
-\vspace{0.6cm}
-
-\normalsize
-\url{https://www.nature.com/articles/s41371-021-00612-6}
-
-
 ## Sodium and Potassium: Complementary Strategies for BP Control
 
-- Sodium reduction policies are intrinsically linked to increasing potassium intake, as both nutrients play complementary roles in lowering blood pressure and reducing CVD risk.
+- Sodium reduction policies are intrinsically linked to increasing potassium intake, as both nutrients play complementary roles in lowering BP and reducing CVD risk.
 
 - While excess sodium raises BP, potassium promotes vasodilation and enhances urinary sodium excretion.
 
-### Key Aspects of the Relationship
-- **Synergistic impact** — Lower sodium combined with higher potassium intake produces larger reductions in blood pressure and stroke risk than sodium reduction alone.
-- **Public health strategy** — Many national policies incorporate potassium-enriched salt substitutes (e.g., 75% NaCl / 25% KCl) to simultaneously reduce sodium and address widespread potassium deficiencies.
-- **Physiological balancing** — Potassium counteracts sodium’s adverse effects, lowering hypertension risk.
-- **Targeted goals** — guidelines emphasize a dual approach: reducing sodium intake and increasing daily potassium consumption.
+**Key Aspects of the Relationship**
 
-### Common Policy Approaches
+- **Synergistic impact**: Lower sodium combined with higher potassium intake produces larger reductions in BP and stroke risk than sodium reduction alone.
+- **Public health strategy**: Many national policies incorporate potassium-enriched salt substitutes (e.g., 75% NaCl / 25% KCl) to simultaneously reduce sodium and address widespread potassium deficiencies.
+- **Physiological balancing**: Potassium counteracts sodium’s adverse effects, lowering hypertension risk.
+- **Targeted goals**: guidelines emphasize a dual approach: reducing sodium intake and increasing daily potassium consumption.
+
+**Common Policy Approaches**
+
 - Promotion of whole, minimally processed foods (fruits, vegetables, legumes) that are naturally high in potassium and low in sodium.
 
+# Data Sources
+
+## Data Sources and Key Variables
+
+```{r data-sources-table}
+ds <- data.table(
+  Source    = c("GBD 2023 (IHME)","GBD 2019 (IHME)","Ettehad et al.\\ 2016",
+                "UNWPP 2024 (UN)","NCD-RisC","Country-specific"),
+  Variables = c(
+    "IR, CF, prevalence, background mortality (age/sex/country)",
+    "Relative risks per 10 mmHg SBP increase (IHD, stroke, HHD, by age)",
+    "Trial effect sizes per BP category; diabetes-stratified",
+    "Population projections 2019--2050 (single-year age, sex, country)",
+    "Baseline HTN control rates ($C_0$); BP distribution by country",
+    "HTN control targets 2030 (Progress / Ambitious / Aspirational)"
+  ),
+  Role = c(
+    "Baseline transition rates; initial states",
+    "Anchor BP-bin incidence; normalisation factor $\\alpha$",
+    "Treatment effect sizes by BP bin $\\times$ cause",
+    "Cohort sizes; rate denominators",
+    "$C_0$; $P(\\text{BP}_{\\text{cat}})$",
+    "$C_{\\text{target}}$ per scenario"
+  )
+)
+kable(ds, align="lll", escape=FALSE, booktabs=TRUE, format="latex",
+      col.names=c("Source","Variables extracted","Role in model")) |>
+  kable_styling(latex_options=c("striped","hold_position"),
+                font_size=8, full_width=TRUE) |>
+  column_spec(1, bold=TRUE, width="2.8cm") |>
+  column_spec(2, width="6.8cm") |>
+  column_spec(3, width="3.4cm")
+```
+
+
+# Mathematical Model
+
+## Model Architecture: Three Health States
+
+```{r state-diagram, fig.height=2.7}
+nodes <- data.table(
+  x=c(1,3.2,5.4), y=c(1,1,1),
+  label=c("Well\n(W)","Sick\n(K)","Dead\n(D)"),
+  fill=c("#d4edda","#fff3cd","#f8d7da")
+)
+arr_main <- data.table(
+  x1=c(1.40,3.60), y1=c(1,1), x2=c(2.80,5.00), y2=c(1,1),
+  lbl=c("IR \u00d7 \u03b5_IR","CF \u00d7 \u03b5_CF")
+)
+arr_bg <- data.table(
+  x1=c(1.0,3.2,3.0), y1=c(1.25,1.25,1.0),
+  x2=c(1.0,3.2,5.0), y2=c(0.62,0.62,0.62),
+  lbl=c("BG.mx","BG.mx","BG.mx.all")
+)
+ggplot() +
+  geom_tile(data=nodes, aes(x=x,y=y,fill=fill),
+            width=0.75,height=0.42,color="grey30",linewidth=0.8) +
+  scale_fill_identity() +
+  geom_text(data=nodes, aes(x=x,y=y,label=label), size=4, fontface="bold") +
+  geom_segment(data=arr_main,
+    aes(x=x1,y=y1,xend=x2,yend=y2),
+    arrow=arrow(length=unit(0.22,"cm"),type="closed"),
+    linewidth=1.2, color="#2171b5") +
+  geom_label(data=arr_main,
+    aes(x=(x1+x2)/2, y=y1+0.22, label=lbl),
+    size=3.2, fill="white", label.padding=unit(0.12,"cm"), color="#2171b5") +
+  geom_segment(data=arr_bg,
+    aes(x=x1,y=y1,xend=x2,yend=y2),
+    arrow=arrow(length=unit(0.16,"cm"),type="closed"),
+    linewidth=0.7, color="grey55", linetype="dashed") +
+  geom_label(data=arr_bg,
+    aes(x=(x1+x2)/2+0.2, y=(y1+y2)/2, label=lbl),
+    size=2.6, fill="white", color="grey50", label.padding=unit(0.08,"cm")) +
+  scale_x_continuous(limits=c(0.5,6.0)) +
+  scale_y_continuous(limits=c(0.28,1.58)) +
+  theme_void(base_size=11) +
+  labs(title="Multi-State Transition Model  |  Annual time step  |  Ages 20-95  |  4 CVD causes")
+```
+
+\small \textbf{Key:} $\varepsilon_{IR}$, $\varepsilon_{CF}$ = multiplicative effect ratios from the intervention module $\cdot$ BG.mx = background mortality $\cdot$ COVID-19 excess mortality applied 2020--2021 only
 
 ## CVD Modeling Engine
 
@@ -108,11 +200,27 @@ knitr::opts_chunk$set(
 - Policy scenarios translate sodium reductions into blood pressure changes using established dose--response relationships.
 - Resulting changes in heart attacks, strokes, and CVD deaths are projected over time.
 
-## CVD Modeling Engine
 
-\centering
+## Modeling Assumptions
 
-\includegraphics[width=0.88\linewidth]{slide7-img.png}
+\begin{columns}[T]
+\begin{column}{0.47\textwidth}
+\textbf{Model structure}
+\begin{itemize}\footnotesize
+  \item Discrete-time annual step (2019--2050); ages 20--95
+  \item Four causes modeled independently
+  \item COVID-19 excess mortality applied 2020--2021 only; no long-term effects
+\end{itemize}
+
+\medskip
+\textbf{Intervention mechanics}
+\begin{itemize}\footnotesize
+  \item Linear scale-up 2026 $\to$ 2030; held constant 2030--2050
+\end{itemize}
+\end{column}
+
+
+# Economic Evaluation
 
 ## Health and Economic Benefits Estimation
 
@@ -152,6 +260,18 @@ E -- Environment & Institutional food reformulation & Compliance & One-off + ann
 \bottomrule
 \end{tabular}
 
+## Full Benefit--Cost Analysis Outputs
+
+\justifying
+
+- Health benefits and implementation costs are combined to estimate net present value.
+- Benefit--cost ratios and return on investment are calculated for each policy scenario.
+- Results allow comparison across individual SHAKE components and bundled strategies.
+- Sensitivity analyses assess robustness to key assumptions and uncertainties.
+
+
+# Decision Tool
+
 ## Integrated Web-Based Decision Tool
 
 \justifying
@@ -161,14 +281,8 @@ E -- Environment & Institutional food reformulation & Compliance & One-off + ann
 - The tool enables real-time comparison of alternative policy scenarios and assumptions.
 - Designed to support evidence-based policymaking and stakeholder engagement.
 
-## Full Benefit--Cost Analysis Outputs
 
-\justifying
-
-- Health benefits and implementation costs are combined to estimate net present value.
-- Benefit--cost ratios and return on investment are calculated for each policy scenario.
-- Results allow comparison across individual SHAKE components and bundled strategies.
-- Sensitivity analyses assess robustness to key assumptions and uncertainties.
+# Discussion
 
 ## Why This Analysis Matters for RTSL
 
@@ -187,4 +301,277 @@ E -- Environment & Institutional food reformulation & Compliance & One-off + ann
 - Complete deployment and testing of the interactive web tool.
 - Use results to support policy adoption, financing, and sustained implementation.
 - Position sodium reduction as a high-return national investment in partner countries.
+
+
+
+<!-- ======================================================================
+     APPENDIX
+     ====================================================================== -->
+
+# Appendix
+
+## Notation: Core Model
+
+\footnotesize
+
+Indices: age $a$, sex $s$, cause $c$, location $\ell$, year $t$, BP category $b$.
+
+\medskip
+\begin{tabular}{ll}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+$IR_{a,s,c,\ell,t}$ & Baseline cause-specific incidence rate \\
+$CF_{a,s,c,\ell,t}$ & Baseline case fatality rate \\
+$BG.mx_{a,s,c,\ell,t}$ & Background mortality (disease state) \\
+$BG.mx.all_{a,s,\ell,t}$ & All-cause background mortality \\
+$PREVt0 / DIS.mx.t0$ & Baseline prevalence / disease mortality \\
+$N_{a,s,\ell,t}$ & Population size \\
+$P(b \mid a,s,\ell,t)$ & Probability of BP category $b$ \\
+$S_{a,s,\ell,t}$ & Baseline mean sodium intake (g/day) \\
+$RBP_{a,s,\ell,t}$ & Share of population with raised BP \\
+$D_{a,s,b,\ell,t}$ & Diabetes prevalence \\
+\bottomrule
+\end{tabular}
+
+## Policy Package: Efficacy
+
+\footnotesize
+
+Five policy components; active set $\mathcal{P}$ selected per scenario.
+
+\medskip
+\begin{tabular}{lll}
+\toprule
+\textbf{Component} & \textbf{Efficacy $e_p$} & \textbf{Note} \\
+\midrule
+Reformulation      & $r \times q_{\text{pkgd}}$          & $r=0.20$ (mandatory), $0.15$ (voluntary) \\
+Package labelling  & $0.10 \times q_{\text{pkgd}}$       & \\
+Media campaigns    & $0.10$                              & whole population \\
+Supportive env.    & $0.20 \times q_{\text{outside}}$    & \\
+Other              & $q_{\text{other}}$                  & optional \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Total package efficacy (passed as \texttt{salteff}):
+$$
+\eta = \sum_{p \in \mathcal{P}} e_p
+$$
+
+## Policy Package: Programme Costs
+
+\footnotesize
+
+Per-capita annual cost: $u = \sum_{p \in \mathcal{P}} u_p$.
+
+Scale-up from implementation start $t_0$ to full coverage $t_1$:
+
+$$
+Cost_{\ell,t} =
+\begin{cases}
+0 & t < t_0 \\[4pt]
+\dfrac{Pop_{\ell,t}}{4} \times u \times Ex \times \dfrac{t - t_0 + 1}{t_1 - t_0 + 1} & t_0 \le t < t_1 \\[8pt]
+\dfrac{Pop_{\ell,t}}{4} \times u \times Ex & t \ge t_1
+\end{cases}
+$$
+
+$Ex$ = optional exchange-rate multiplier. Population divided by 4 = quarterly scaling convention.
+
+## Sodium Intake Reduction
+
+\footnotesize
+
+Three reduction methods; all subject to a 2 g/day minimum intake floor.
+
+\medskip
+\textbf{Percent reduction} (main scenario runner):
+$$\Delta S^{*}_{a,s,\ell,t} = S_{a,s,\ell,t} \times \eta$$
+
+\textbf{Target-based} (absolute gram target):
+$$\Delta S^{*}_{a,s,\ell,t} = \min(S_{a,s,\ell,t},\; \eta)$$
+
+\textbf{Fixed absolute} (app-based):
+$$\Delta S^{*}_{a,s,\ell,t} = \max(0,\; S_{a,s,\ell,t} - \eta)$$
+
+\textbf{Floor adjustment}:
+$$
+\Delta S_{a,s,\ell,t} =
+\begin{cases}
+S_{a,s,\ell,t} - 2 & \text{if } S - \Delta S^{*} < 2 \\
+\Delta S^{*}_{a,s,\ell,t} & \text{otherwise}
+\end{cases}
+$$
+
+## Scale-Up Time Path
+
+\footnotesize
+
+Linear interpolation between implementation start ($T_{\text{start}}$) and full implementation ($T_{\text{full}}$):
+
+$$
+\Delta S^{\text{scale}}_{a,s,\ell,t} =
+\begin{cases}
+0 & t < T_{\text{start}} \\[6pt]
+\Delta S_{a,s,\ell,t} \times \dfrac{t - T_{\text{start}} + 1}{T_{\text{full}} - T_{\text{start}} + 1} & T_{\text{start}} \le t \le T_{\text{full}} \\[8pt]
+\Delta S_{a,s,\ell,t} & t > T_{\text{full}}
+\end{cases}
+$$
+
+\medskip
+Default scenario parameters: $T_{\text{start}} = 2026$, $T_{\text{full}} = 2030$.
+
+## Sodium $\to$ Systolic Blood Pressure Reduction
+
+\footnotesize
+
+Filippini-style dose--response, differentiating raised- and normal-BP subgroups:
+
+$$
+\Delta SBP_{a,s,\ell,t}
+= \Bigl(2.8 \times RBP_{a,s,\ell,t} \;+\; 1.0 \times (1-RBP_{a,s,\ell,t})\Bigr)
+  \times \Delta S^{\text{scale}}_{a,s,\ell,t}
+$$
+
+\medskip
+\begin{tabular}{ll}
+\toprule
+\textbf{Subgroup} & \textbf{SBP reduction per g/day Na removed} \\
+\midrule
+Raised BP ($RBP=1$) & 2.8 mmHg \\
+Normal BP ($RBP=0$) & 1.0 mmHg \\
+\bottomrule
+\end{tabular}
+
+## Baseline Incidence by BP Category
+
+\footnotesize
+
+\textbf{Step 1 -- GBD relative risk by bin.}
+Let $m_b$ be the midpoint SBP of bin $b$ (reference: $<$120 mmHg $\to$ midpoint 110):
+$$
+RR^{GBD}_{b,a,c} = \bigl(RR^{10}_{a,c}\bigr)^{(m_b - 120)/10}, \quad m_b > 120; \quad 1 \text{ otherwise}
+$$
+
+\textbf{Step 2 -- Normalisation factor} (ensures consistency with aggregate $IR$):
+$$
+\alpha_{a,s,c,\ell,t} = \sum_b P(b \mid a,s,\ell,t) \times RR^{GBD}_{b,a,c}
+$$
+
+\textbf{Step 3 -- Bin-specific baseline incidence:}
+$$
+IR^{bin}_{b,a,s,c,\ell,t} = \frac{RR^{GBD}_{b,a,c} \times IR_{a,s,c,\ell,t}}{\alpha_{a,s,c,\ell,t}}
+$$
+
+## ETIHAD Effect Sizes
+
+\footnotesize
+
+ETIHAD (Ettehad et al.\ 2016) provides per-10-mmHg RR reductions by BP category and cause from randomised trial meta-analysis.
+
+\medskip
+\textbf{Diabetes-weighted cumulative effect} for bin $b$, cause $c$:
+
+$$
+E_{b,c,a,s,\ell,t}
+= (1 - D_{a,s,b,\ell,t})\,E^{ND}_{b,c}
+  \;+\; D_{a,s,b,\ell,t}\,E^{D}_{b,c}
+$$
+
+where $E^{ND}_{b,c}$ and $E^{D}_{b,c}$ are the no-diabetes and diabetes-specific cumulative effect sizes tabulated from ETIHAD.
+
+\medskip
+$\Rightarrow$ implemented in \texttt{calculate\_etihad\_cumulative\_rr()}.
+
+## Effect of Sodium Reduction on Incidence
+
+\footnotesize
+
+\textbf{Step 1 -- Sodium-induced effect per bin.}
+Scale the per-10-mmHg ETIHAD effect proportionally to achieved SBP reduction:
+
+$$
+E^{\text{sodium}}_{b,a,s,c,\ell,t}
+= \bigl(1 - RR^{ETIHAD}_{b,c}\bigr) \times 0.1 \times \Delta SBP_{a,s,\ell,t}
+$$
+
+\textbf{Step 2 -- New bin-specific incidence:}
+$$
+IR^{bin,new}_{b,a,s,c,\ell,t} = IR^{bin}_{b,a,s,c,\ell,t} \times \bigl(1 - E^{\text{sodium}}_{b,a,s,c,\ell,t}\bigr)
+$$
+
+\textbf{Step 3 -- Population-weighted new incidence:}
+$$
+IR^{new}_{a,s,c,\ell,t} = \sum_b IR^{bin,new}_{b,a,s,c,\ell,t} \times P(b \mid a,s,\ell,t)
+$$
+
+Incidence effect ratio carried into the life table:
+$\;\varepsilon^{IR}_{a,s,c,\ell,t} = IR^{new} / IR$
+
+## Case Fatality Assumption
+
+\footnotesize
+
+The sodium policy model does \textbf{not} impose a secondary effect on case fatality (unlike antihypertensive treatment models).
+
+$$
+CF^{new}_{a,s,c,\ell,t} = CF_{a,s,c,\ell,t}
+\qquad \Rightarrow \qquad
+\varepsilon^{CF}_{a,s,c,\ell,t} = 1
+$$
+
+\medskip
+\textbf{Rationale}: Sodium reduction acts entirely through lower incidence of new events. Trial evidence for a direct sodium-pathway effect on survival of existing disease is insufficient to parameterize a case-fatality reduction.
+
+## State-Transition Equations
+
+\footnotesize
+
+Annual transitions (age $a \to a+1$, year $t \to t+1$):
+
+$$
+NewCases_{a+1,t+1} = Well_{a,t} \times IR_{a,t}
+$$
+
+$$
+Sick_{a+1,t+1} = Sick_{a,t}\bigl(1 - CF_{a,t} - BG.mx_{a,t} - covid.mx_{a,t}\bigr) + Well_{a,t} \times IR_{a,t}
+$$
+
+$$
+Dead_{a+1,t+1} = Sick_{a,t} \times CF_{a,t}
+$$
+
+$$
+Pop_{a+1,t+1} = Pop_{a,t} - all.mx_{a,t}
+$$
+
+$$
+Well_{a+1,t+1} = Pop_{a+1,t+1} - all.mx_{a+1,t+1} - Sick_{a+1,t+1}
+$$
+
+\medskip
+\textbf{Initial conditions} ($t=t_0$ or $a=20$):
+$\;Sick_0 = N \cdot PREVt0;\; Dead_0 = N \cdot DIS.mx.t0;\; Well_0 = N(1-PREVt0-BG.mx)$
+
+## Scenario Definitions and Default Efficacies
+
+\footnotesize
+
+Five scenarios; $q_{\text{pkgd}} = q_{\text{outside}} = 30\%$; $u_p = \$0.05$ per component; scale-up 2026--2030.
+
+\medskip
+\begin{tabular}{lcc}
+\toprule
+\textbf{Scenario} & \textbf{Active policies} & \textbf{$\eta$ (salteff)} \\
+\midrule
+Baseline                  & none             & 0 \\
+Reformulation -- mandatory & reform only      & $0.20 \times 0.30 = 0.060$ \\
+Reformulation -- voluntary & reform only      & $0.15 \times 0.30 = 0.045$ \\
+Full package -- mandatory  & reform + label + media + support & $0.060+0.030+0.100+0.060 = 0.250$ \\
+Full package -- voluntary  & reform + label + media + support & $0.045+0.030+0.100+0.060 = 0.235$ \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Per-capita annual costs: \$0.05 (reformulation-only) to \$0.20 (full 4-component package).
 
