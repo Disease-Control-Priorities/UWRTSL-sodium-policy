@@ -13,108 +13,222 @@
 # 7) Aggregating outputs by age group
   
     
+library(data.table)
+
 ###############################################################################
-# 1) HELPER: format large numbers
+# 1) POLICY DEFINITIONS
 ###############################################################################
-so_formatter <- function(x) {
-  fifelse(
-    x < 1e3, as.character(x),
-    fifelse(
-      x < 1e6, paste0(signif(x / 1e3, 3), "K"),
-      fifelse(
-        x < 1e9, paste0(signif(x / 1e6, 3), "M"),
-        fifelse(
-          x < 1e12, paste0(signif(x / 1e9, 3), "B"),
-          paste0(signif(x / 1e12, 3), "T")
-        )
-      )
+
+default_sodium_policy_table <- function(
+    reform = "Mandatory",
+    packaged_salt_pct = 30,
+    outside_salt_pct = 30,
+    reform_cost = 0.05,
+    label_cost = 0.05,
+    media_cost = 0.05,
+    support_cost = 0.05,
+    other_cost = 0.00,
+    other_eff_pct = 0
+) {
+  reform_eff_pct <- if (reform == "Mandatory") 20 else 15
+  label_eff_pct  <- 10
+  media_eff_pct  <- 10
+  support_eff_pct <- 20
+  
+  data.table(
+    policy = c(
+      "Reformulation",
+      "Package labelling",
+      "Media campaigns",
+      "Supportive environment",
+      "Other"
+    ),
+    efficacy = c(
+      (reform_eff_pct / 100) * (packaged_salt_pct / 100),
+      (label_eff_pct  / 100) * (packaged_salt_pct / 100),
+      (media_eff_pct  / 100),
+      (support_eff_pct / 100) * (outside_salt_pct / 100),
+      (other_eff_pct / 100)
+    ),
+    efficacy_pct = c(
+      reform_eff_pct,
+      label_eff_pct,
+      media_eff_pct,
+      support_eff_pct,
+      other_eff_pct
+    ),
+    target_share_pct = c(
+      packaged_salt_pct,
+      packaged_salt_pct,
+      100,
+      outside_salt_pct,
+      100
+    ),
+    unit_cost = c(
+      reform_cost,
+      label_cost,
+      media_cost,
+      support_cost,
+      other_cost
     )
   )
 }
 
 ###############################################################################
-# 2) HELPER: BP-category-specific RR multiplier
-#    RR is interpreted as per 10 mmHg lower SBP ratio from original app logic
+# 2) APPLY POLICY SELECTION
 ###############################################################################
-add_rr <- function(rr, bp_cat) {
-  fcase(
-    bp_cat == "<120",    1,
-    bp_cat == "120-129", 1 / rr,
-    bp_cat == "130-139", 1 / rr^2,
-    bp_cat == "140-149", 1 / rr^3,
-    bp_cat == "150-159", 1 / rr^4,
-    bp_cat == "160-169", 1 / rr^5,
-    bp_cat == "170-179", 1 / rr^6,
-    default              = 1 / rr^7
+
+summarize_sodium_policy_package <- function(
+    selected_policies = NULL,
+    policy_dt
+) {
+  policy_dt <- copy(as.data.table(policy_dt))
+  
+  if (is.null(selected_policies) || length(selected_policies) == 0) {
+    selected <- policy_dt[0]
+    total_efficacy <- 0
+    total_unit_cost <- 0
+  } else {
+    selected <- policy_dt[policy %in% selected_policies]
+    total_efficacy <- selected[, sum(efficacy)]
+    total_unit_cost <- selected[, sum(unit_cost)]
+  }
+  
+  list(
+    selected = selected,
+    total_efficacy = total_efficacy,   # fraction of sodium reduced
+    total_unit_cost = total_unit_cost  # per-capita annual cost
   )
 }
 
 ###############################################################################
-# 3) SODIUM -> BP DISTRIBUTION MODEL
-#
-# Required columns in DT:
-#   location, age, sex, Year, Mean, stdev, raisedBP, bp_cat
-#
-# Notes:
-# - salteff_g = achieved sodium reduction in grams/day
-# - original app converts sodium(g) to salt(g) with * 2.54 before calling
-# - BP shift formula preserved from original app:
-#     ((1.23 * raisedBP) + ((1 - raisedBP) * 0.55)) * salteff
+# 3) BASELINE / TARGET SODIUM TABLE
 ###############################################################################
-get_bp_prob_salt <- function(DT,
-                             salteff_g,
-                             start_year,
-                             end_year) {
+
+build_sodium_intake_table <- function(
+    baseline_sodium_g,
+    total_efficacy
+) {
+  reduced <- baseline_sodium_g * total_efficacy
+  target  <- baseline_sodium_g - reduced
+  
+  data.table(
+    Baseline = baseline_sodium_g,
+    Reduced = reduced,
+    Target = target
+  )
+}
+
+###############################################################################
+# 4) YEAR-SPECIFIC SODIUM POLICY COSTS
+#    Matches original app logic:
+#    - before start year: 0
+#    - linearly scale up between start and end
+#    - full cost afterward
+###############################################################################
+
+calc_sodium_policy_costs <- function(
+    pop_dt,                   # must include year, Pop
+    per_capita_cost,
+    start_year,
+    end_year,
+    exchange = 1
+) {
+  pop_dt <- copy(as.data.table(pop_dt))
+  
+  pop_dt[, saltcosts := 0]
+  
+  pop_dt[
+    year < start_year,
+    saltcosts := 0
+  ]
+  
+  pop_dt[
+    year >= start_year & year < end_year,
+    saltcosts := (Pop / 4) * per_capita_cost * exchange *
+      (year - start_year + 1) / (end_year - start_year + 1)
+  ]
+  
+  pop_dt[
+    year >= end_year,
+    saltcosts := (Pop / 4) * per_capita_cost * exchange
+  ]
+  
+  pop_dt[]
+}
+
+###############################################################################
+# 5) SODIUM -> BP DISTRIBUTION MODEL
+###############################################################################
+
+get_bp_prob_salt <- function(
+    DT,
+    salteff_g,
+    saltyear1,
+    saltyear2
+) {
   DT <- copy(as.data.table(DT))
   
-  # Apply linear scale-up in mean SBP reduction
   if (salteff_g != 0) {
     DT[
-      Year >= start_year & Year <= end_year,
+      Year >= saltyear1 & Year <= saltyear2,
       Mean := Mean - (
         ((1.23 * raisedBP) + ((1 - raisedBP) * 0.55)) *
           salteff_g *
-          (Year - start_year + 1) / (end_year - start_year + 1)
+          (Year - saltyear1 + 1) / (saltyear2 - saltyear1 + 1)
       )
     ]
     
     DT[
-      Year > end_year,
+      Year > saltyear2,
       Mean := Mean - (
         ((1.23 * raisedBP) + ((1 - raisedBP) * 0.55)) * salteff_g
       )
     ]
   }
   
-  # Gamma distribution parameters
   DT[, Scale := stdev^2 / Mean]
   DT[, Shape := (Mean / stdev)^2]
   
-  # BP category probabilities
-  DT[bp_cat == "<120",    prob := pgamma(120, shape = Shape, scale = Scale)]
-  DT[bp_cat == "120-129", prob := pgamma(130, shape = Shape, scale = Scale) -
-       pgamma(120, shape = Shape, scale = Scale)]
-  DT[bp_cat == "130-139", prob := pgamma(140, shape = Shape, scale = Scale) -
-       pgamma(130, shape = Shape, scale = Scale)]
-  DT[bp_cat == "140-149", prob := pgamma(150, shape = Shape, scale = Scale) -
-       pgamma(140, shape = Shape, scale = Scale)]
-  DT[bp_cat == "150-159", prob := pgamma(160, shape = Shape, scale = Scale) -
-       pgamma(150, shape = Shape, scale = Scale)]
-  DT[bp_cat == "160-169", prob := pgamma(170, shape = Shape, scale = Scale) -
-       pgamma(160, shape = Shape, scale = Scale)]
-  DT[bp_cat == "170-179", prob := pgamma(180, shape = Shape, scale = Scale) -
-       pgamma(170, shape = Shape, scale = Scale)]
-  DT[bp_cat == "180+",    prob := 1 - pgamma(180, shape = Shape, scale = Scale)]
+  DT[bp_cat == "<120",    prob := pgamma(120, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "120-129", prob := pgamma(130, shape = Shape, scale = Scale, lower.tail = TRUE) -
+       pgamma(120, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "130-139", prob := pgamma(140, shape = Shape, scale = Scale, lower.tail = TRUE) -
+       pgamma(130, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "140-149", prob := pgamma(150, shape = Shape, scale = Scale, lower.tail = TRUE) -
+       pgamma(140, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "150-159", prob := pgamma(160, shape = Shape, scale = Scale, lower.tail = TRUE) -
+       pgamma(150, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "160-169", prob := pgamma(170, shape = Shape, scale = Scale, lower.tail = TRUE) -
+       pgamma(160, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "170-179", prob := pgamma(180, shape = Shape, scale = Scale, lower.tail = TRUE) -
+       pgamma(170, shape = Shape, scale = Scale, lower.tail = TRUE)]
+  DT[bp_cat == "180+",    prob := 1 - pgamma(180, shape = Shape, scale = Scale, lower.tail = TRUE)]
   
   DT[, .(age, sex, Year, bp_cat, prob, location)]
 }
 
 ###############################################################################
-# 4) EXPAND AGE GROUPS TO SINGLE YEARS
-#
-# Original app assumed age labels like "20-24", "25-29", ..., "89"
-# and expanded 5-year groups to single-year ages, then 90+ tail.
+# 6) RR MAPPER
 ###############################################################################
+
+add_rr <- function(RR, bp) {
+  fcase(
+    bp == "<120",    1,
+    bp == "120-129", 1 / RR,
+    bp == "130-139", 1 / RR^2,
+    bp == "140-149", 1 / RR^3,
+    bp == "150-159", 1 / RR^4,
+    bp == "160-169", 1 / RR^5,
+    bp == "170-179", 1 / RR^6,
+    default = 1 / RR^7
+  )
+}
+
+###############################################################################
+# 7) EXPAND AGE GROUPS TO SINGLE-YEAR AGES
+###############################################################################
+
 expand_bp_probs_to_single_age <- function(bp_probs) {
   bp_probs <- copy(as.data.table(bp_probs))
   
@@ -134,18 +248,14 @@ expand_bp_probs_to_single_age <- function(bp_probs) {
 }
 
 ###############################################################################
-# 5) CALCULATE INTERVENTION-SPECIFIC INCIDENCE RATES
-#
-# Required inputs:
-# - bp_prob_int: output from get_bp_prob_salt(), expanded to single-year ages
-# - bp_prob_base: baseline version of same
-# - base_rates columns expected:
-#   age, sex, location, cause, year, IR, CF, BG.mx, BG.mx.all,
-#   PREVt0, DIS.mx.t0, Nx, ALL.mx, sick, well, dead, pop, all.mx
+# 8) BUILD SODIUM-ONLY INTERVENTION RATES
 ###############################################################################
-build_intervention_rates_sodium <- function(bp_prob_int,
-                                            bp_prob_base,
-                                            base_rates) {
+
+build_intervention_rates_salt <- function(
+    bp_prob_int,
+    bp_prob_base,
+    base_rates
+) {
   bp_prob_int  <- copy(as.data.table(bp_prob_int))
   bp_prob_base <- copy(as.data.table(bp_prob_base))
   base_rates   <- copy(as.data.table(base_rates))
@@ -159,38 +269,33 @@ build_intervention_rates_sodium <- function(bp_prob_int,
     all.x = TRUE
   )
   
-  # Relative risks by cause
-  bp_probs[, RRi_IHD    := add_rr(0.83, bp_cat)]
-  bp_probs[, RRi_HHD    := add_rr(0.72, bp_cat)]
+  bp_probs[, RRi_IHD := add_rr(0.83, bp_cat)]
+  bp_probs[, RRi_HHD := add_rr(0.72, bp_cat)]
   bp_probs[, RRi_stroke := add_rr(0.73, bp_cat)]
   
-  # Alpha denominators under baseline BP distribution
   alphas <- bp_probs[
     ,
     .(
-      ihd     = sum(prob_0 * RRi_IHD),
+      ihd = sum(prob_0 * RRi_IHD),
       istroke = sum(prob_0 * RRi_stroke),
       hstroke = sum(prob_0 * RRi_stroke),
-      hhd     = sum(prob_0 * RRi_HHD)
+      hhd = sum(prob_0 * RRi_HHD)
     ),
     by = .(age, sex, location, Year)
   ]
   
-  alphas_long <- melt(
+  alphas <- melt(
     alphas,
     id.vars = c("age", "sex", "location", "Year"),
     variable.name = "cause",
     value.name = "alpha"
   )
   
-  rris <- bp_probs[
-    ,
-    .(age, sex, Year, location, bp_cat, prob, RRi_IHD, RRi_HHD, RRi_stroke)
-  ]
+  rris <- bp_probs[, .(age, sex, Year, location, bp_cat, prob, RRi_IHD, RRi_HHD, RRi_stroke)]
   rris[, hstroke := RRi_stroke]
   setnames(rris, c("RRi_IHD", "RRi_HHD", "RRi_stroke"), c("ihd", "hhd", "istroke"))
   
-  rris_long <- melt(
+  rris <- melt(
     rris,
     id.vars = c("age", "sex", "location", "bp_cat", "prob", "Year"),
     variable.name = "cause",
@@ -198,11 +303,12 @@ build_intervention_rates_sodium <- function(bp_prob_int,
   )
   
   bp_long <- merge(
-    rris_long,
-    alphas_long,
+    rris,
+    alphas,
     by = c("age", "sex", "location", "cause", "Year"),
     all.x = TRUE
   )
+  
   setnames(bp_long, "Year", "year")
   
   intervention_rates <- merge(
@@ -212,90 +318,65 @@ build_intervention_rates_sodium <- function(bp_prob_int,
     all.x = TRUE
   )
   
-  # Re-weight incidence by intervention-altered BP distribution
   intervention_rates[, yixpi := (RRi * IR / alpha) * prob]
   
   intervention_rates[
     ,
     IR := sum(yixpi),
     by = .(
-      age, sex, location, cause, year,
-      CF, BG.mx, BG.mx.all, PREVt0, DIS.mx.t0, Nx, ALL.mx,
-      sick, well, dead, pop, all.mx
+      age, sex, location, cause, CF, BG.mx, BG.mx.all,
+      PREVt0, DIS.mx.t0, Nx, year, ALL.mx
     )
   ]
   
-  intervention_rates <- unique(
-    intervention_rates[
-      ,
-      !c("prob", "bp_cat", "yixpi", "RRi", "alpha", "prob_0")
-    ]
+  unique(
+    intervention_rates[, !c("prob", "bp_cat", "yixpi", "RRi", "alpha", "prob_0")]
   )
+}
+
+###############################################################################
+# 9) RUN STATE-TRANSITION MODEL FOR SODIUM ONLY
+###############################################################################
+
+run_salt_state_model <- function(intervention_rates,
+                                 start_year = 2017,
+                                 end_year = 2040) {
+  intervention_rates <- copy(as.data.table(intervention_rates))
   
   intervention_rates[CF > 0.99, CF := 0.99]
   intervention_rates[IR > 0.99, IR := 0.99]
   
-  intervention_rates[]
-}
-
-###############################################################################
-# 6) RUN MULTIYEAR STATE-TRANSITION MODEL
-###############################################################################
-run_state_transitions_sodium <- function(intervention_rates,
-                                         start_year = 2017,
-                                         end_year = 2040) {
-  intervention_rates <- copy(as.data.table(intervention_rates))
-  
   for (i in seq_len(end_year - start_year)) {
     yr <- start_year + i
     
-    b2 <- intervention_rates[year %in% c(yr - 1, yr)]
+    b2 <- intervention_rates[year <= yr & year >= (yr - 1)]
     b2[, age2 := age + 1]
     
-    # Sick next year
-    b2[
-      ,
-      sick2 := shift(sick) * (1 - (CF + BG.mx)) + shift(well) * IR,
-      by = .(sex, location, cause, age)
-    ]
+    b2[, sick2 := shift(sick) * (1 - (CF + BG.mx)) + shift(well) * IR,
+       by = .(sex, location, cause, age)]
     
-    # Cause-specific deaths next year
-    b2[
-      ,
-      dead2 := shift(sick) * CF,
-      by = .(sex, location, cause, age)
-    ]
+    b2[, dead2 := shift(sick) * CF,
+       by = .(sex, location, cause, age)]
     
-    # Population next year
-    b2[
-      ,
-      pop2 := shift(pop) - shift(all.mx),
-      by = .(sex, location, cause, age)
-    ]
+    b2[, pop2 := shift(pop) - shift(all.mx),
+       by = .(sex, location, cause, age)]
     b2[pop2 < 0, pop2 := 0]
     
-    # All-cause mortality
-    b2[
-      ,
-      all.mx2 := sum(dead2),
-      by = .(sex, location, year, age)
-    ]
+    b2[, all.mx2 := sum(dead2), by = .(sex, location, year, age)]
     b2[, all.mx2 := all.mx2 + (pop2 * BG.mx.all)]
     
-    # Well next year
     b2[, well2 := pop2 - all.mx2 - sick2]
     b2[well2 < 0, well2 := 0]
     
-    # Push updated states into current year
     b2 <- b2[
       year == yr & age2 < 96,
       .(age = age2, sick2, dead2, well2, pop2, all.mx2, sex, location, cause)
     ]
     
-    intervention_rates[year == yr & age > 20, sick   := b2$sick2]
-    intervention_rates[year == yr & age > 20, dead   := b2$dead2]
-    intervention_rates[year == yr & age > 20, well   := b2$well2]
-    intervention_rates[year == yr & age > 20, pop    := b2$pop2]
+    intervention_rates[year == yr & age > 20, sick := b2$sick2]
+    intervention_rates[year == yr & age > 20, dead := b2$dead2]
+    intervention_rates[year == yr & age > 20, well := b2$well2]
+    intervention_rates[year == yr & age > 20, pop := b2$pop2]
     intervention_rates[year == yr & age > 20, all.mx := b2$all.mx2]
   }
   
@@ -303,257 +384,140 @@ run_state_transitions_sodium <- function(intervention_rates,
 }
 
 ###############################################################################
-# 7) AGGREGATE OUTPUTS
+# 10) MASTER WRAPPER: SODIUM PACKAGE + SODIUM EPIDEMIOLOGY + COSTING
 ###############################################################################
-aggregate_sodium_outputs <- function(graphs, ref) {
-  graphs <- copy(as.data.table(graphs))
-  ref    <- copy(as.data.table(ref))
-  
-  graphs[pop == 0, pop := 1]
-  
-  # Crude grouped outputs
-  all_ages <- graphs[
-    ,
-    .(Prevalence = sum(sick), Death = sum(dead), Pop = sum(pop)),
-    by = .(sex, year, cause, location)
-  ]
-  all_ages[, age.group := "All ages (20-95)"]
-  
-  age_20_39 <- graphs[
-    age < 40,
-    .(Prevalence = sum(sick), Death = sum(dead), Pop = sum(pop)),
-    by = .(sex, year, cause, location)
-  ]
-  age_20_39[, age.group := "20-39"]
-  
-  age_30_69 <- graphs[
-    age >= 30 & age < 70,
-    .(Prevalence = sum(sick), Death = sum(dead), Pop = sum(pop)),
-    by = .(sex, year, cause, location)
-  ]
-  age_30_69[, age.group := "30-69"]
-  
-  age_70_95 <- graphs[
-    age >= 70,
-    .(Prevalence = sum(sick), Death = sum(dead), Pop = sum(pop)),
-    by = .(sex, year, cause, location)
-  ]
-  age_70_95[, age.group := "70-95"]
-  
-  age_20_69 <- graphs[
-    age < 70,
-    .(Prevalence = sum(sick), Death = sum(dead), Pop = sum(pop)),
-    by = .(sex, year, cause, location)
-  ]
-  age_20_69[, age.group := "20-69"]
-  
-  allage <- rbindlist(
-    list(all_ages, age_20_39, age_30_69, age_70_95, age_20_69),
-    use.names = TRUE
-  )
-  
-  # Both sexes
-  allsex <- allage[
-    ,
-    .(Prevalence = sum(Prevalence), Death = sum(Death), Pop = sum(Pop)),
-    by = .(age.group, year, cause, location)
-  ]
-  allsex[, sex := "Both"]
-  
-  out <- rbindlist(list(allage, allsex), use.names = TRUE)
-  
-  # All causes
-  allcause <- out[
-    ,
-    .(Prevalence = sum(Prevalence), Death = sum(Death), Pop = sum(Pop)),
-    by = .(age.group, year, sex, location)
-  ]
-  allcause[, cause := "All causes"]
-  
-  out <- rbindlist(list(out, allcause), use.names = TRUE)
-  
-  # Crude rates
-  out[, prevrate  := (Prevalence / Pop) * 100000]
-  out[, deathrate := (Death / Pop) * 100000]
-  
-  # Age-standardized rates
-  std_input <- graphs[
-    ,
-    .(sick = sum(sick), dead = sum(dead), pop = sum(pop)),
-    by = .(age, year, cause, sex, location)
-  ]
-  
-  std_merged <- merge(
-    std_input,
-    ref,
-    by = c("sex", "age", "cause", "location"),
-    all.x = TRUE
-  )
-  
-  std_merged[, crudeprevrate  := sick / pop]
-  std_merged[, crudedeathrate := dead / pop]
-  std_merged[, newprev := crudeprevrate * Nx2040]
-  std_merged[, newdead := crudedeathrate * Nx2040]
-  
-  male_total <- ref[sex == "Male",   sum(Nx2040, na.rm = TRUE)]
-  fem_total  <- ref[sex == "Female", sum(Nx2040, na.rm = TRUE)]
-  
-  asr <- std_merged[
-    ,
-    .(prevrate = sum(newprev, na.rm = TRUE),
-      deathrate = sum(newdead, na.rm = TRUE)),
-    by = .(sex, location, cause, year)
-  ]
-  
-  asr[sex == "Male",   `:=`(prevrate = (prevrate / male_total) * 100000,
-                            deathrate = (deathrate / male_total) * 100000)]
-  asr[sex == "Female", `:=`(prevrate = (prevrate / fem_total) * 100000,
-                            deathrate = (deathrate / fem_total) * 100000)]
-  asr[, age.group := "Age-standardized"]
-  
-  asr_allcause <- asr[
-    ,
-    .(prevrate = sum(prevrate), deathrate = sum(deathrate)),
-    by = .(age.group, sex, year, location)
-  ]
-  asr_allcause[, cause := "All causes"]
-  
-  asr <- rbindlist(list(asr, asr_allcause), use.names = TRUE)
-  
-  asr_allsex <- asr[
-    ,
-    .(prevrate = sum(prevrate), deathrate = sum(deathrate)),
-    by = .(age.group, year, cause, location)
-  ]
-  asr_allsex[, sex := "Both"]
-  
-  asr <- rbindlist(list(asr, asr_allsex), use.names = TRUE)
-  
-  out <- rbindlist(list(out, asr), use.names = TRUE, fill = TRUE)
-  
-  # Relabel causes
-  out[cause == "ihd",     cause := "Ischemic heart disease"]
-  out[cause == "hhd",     cause := "Hypertensive heart disease"]
-  out[cause == "istroke", cause := "Ischemic stroke"]
-  out[cause == "hstroke", cause := "Hemorrhagic stroke"]
-  
-  out[]
-}
 
-###############################################################################
-# 8) MAIN WRAPPER: RUN SODIUM-ONLY MODEL
-#
-# Inputs:
-# - country: scalar character
-# - sodium_reduction_g: achieved sodium reduction in grams/day
-# - saltyear_start, saltyear_end: linear scale-up period
-# - data_in: BP distribution input
-# - b_rates: baseline rates
-# - baseline: baseline epidemiologic outputs
-# - ref: reference population for standardization
-#
-# Expected columns in data_in:
-#   location, age, sex, raisedBP, bp_cat, Mean, stdev
-#
-# Expected columns in b_rates:
-#   location, age, sex, cause, year, IR, CF, BG.mx, BG.mx.all,
-#   PREVt0, DIS.mx.t0, Nx, ALL.mx, sick, well, dead, pop, all.mx
-#
-# Expected columns in baseline:
-#   location, age, sex, year, cause, well, sick, dead, pop, all.mx
-###############################################################################
-run_sodium_model <- function(country,
-                             sodium_reduction_g,
-                             saltyear_start,
-                             saltyear_end,
-                             data_in,
-                             b_rates,
-                             baseline,
-                             ref,
-                             model_start_year = 2017,
-                             model_end_year = 2040) {
-  data_in  <- copy(as.data.table(data_in))
-  b_rates  <- copy(as.data.table(b_rates))
-  baseline <- copy(as.data.table(baseline))
-  ref      <- copy(as.data.table(ref))
+run_sodium_policy_model <- function(
+    country,
+    selected_policies,
+    baseline_sodium_g,
+    data_in,
+    b_rates,
+    baseline,
+    ref = NULL,
+    saltyear_start,
+    saltyear_end,
+    reform = "Mandatory",
+    packaged_salt_pct = 30,
+    outside_salt_pct = 30,
+    reform_cost = 0.05,
+    label_cost = 0.05,
+    media_cost = 0.05,
+    support_cost = 0.05,
+    other_cost = 0,
+    other_eff_pct = 0,
+    start_year = 2017,
+    end_year = 2040
+) {
   
-  # Country-specific inputs
-  base_rates <- b_rates[location == country]
-  base_out   <- baseline[location == country]
-  DT0        <- data_in[location == country]
+  policy_dt <- default_sodium_policy_table(
+    reform = reform,
+    packaged_salt_pct = packaged_salt_pct,
+    outside_salt_pct = outside_salt_pct,
+    reform_cost = reform_cost,
+    label_cost = label_cost,
+    media_cost = media_cost,
+    support_cost = support_cost,
+    other_cost = other_cost,
+    other_eff_pct = other_eff_pct
+  )
   
-  # Reproduce app logic: duplicate baseline BP rows over 24 modeled years
-  DT0[, Year := model_start_year]
-  DT0 <- DT0[, !c("Low95CI", "High95CI"), with = FALSE]
+  package_summary <- summarize_sodium_policy_package(
+    selected_policies = selected_policies,
+    policy_dt = policy_dt
+  )
   
-  n_years <- model_end_year - model_start_year + 1
+  sodium_table <- build_sodium_intake_table(
+    baseline_sodium_g = baseline_sodium_g,
+    total_efficacy = package_summary$total_efficacy
+  )
+  
+  # App logic used reduced sodium * 2.54 before applying BP effect
+  sodium_reduction_equiv <- sodium_table$Reduced[1] * 2.54
+  
+  base_rates <- copy(as.data.table(b_rates))[location == country]
+  baseline_country <- copy(as.data.table(baseline))[location == country]
+  DT0 <- copy(as.data.table(data_in))[location == country]
+  
+  DT0[, Year := start_year]
+  drop_cols <- intersect(c("Low95CI", "High95CI"), names(DT0))
+  if (length(drop_cols) > 0) DT0[, (drop_cols) := NULL]
+  
+  n_years <- end_year - start_year + 1
   DT_in <- DT0[rep(seq_len(.N), n_years)]
-  DT_in[, Year := rep(model_start_year:model_end_year, each = nrow(DT0))]
+  DT_in[, Year := rep(start_year:end_year, each = nrow(DT0))]
   
-  # Original app converted sodium(g) to salt(g) via * 2.54
-  salt_effect_equiv <- sodium_reduction_g * 2.54
-  
-  # Intervention and baseline BP probabilities
   bp_prob_salt <- get_bp_prob_salt(
-    DT         = DT_in,
-    salteff_g  = salt_effect_equiv,
-    start_year = saltyear_start,
-    end_year   = saltyear_end
+    DT = DT_in,
+    salteff_g = sodium_reduction_equiv,
+    saltyear1 = saltyear_start,
+    saltyear2 = saltyear_end
   )
   
   bp_prob_base <- get_bp_prob_salt(
-    DT         = DT_in,
-    salteff_g  = 0,
-    start_year = saltyear_start,
-    end_year   = saltyear_end
+    DT = DT_in,
+    salteff_g = 0,
+    saltyear1 = saltyear_start,
+    saltyear2 = saltyear_end
   )
   
-  # Expand age groups to single-year ages
   bp_prob_salt <- expand_bp_probs_to_single_age(bp_prob_salt)
   bp_prob_base <- expand_bp_probs_to_single_age(bp_prob_base)
   
-  # Build intervention-adjusted rates
-  intervention_rates <- build_intervention_rates_sodium(
-    bp_prob_int  = bp_prob_salt,
+  intervention_rates <- build_intervention_rates_salt(
+    bp_prob_int = bp_prob_salt,
     bp_prob_base = bp_prob_base,
-    base_rates   = base_rates
+    base_rates = base_rates
   )
   
-  # Run state transitions
-  sim_out <- run_state_transitions_sodium(
+  sim_out <- run_salt_state_model(
     intervention_rates = intervention_rates,
-    start_year = model_start_year,
-    end_year   = model_end_year
+    start_year = start_year,
+    end_year = end_year
   )
   
-  sim_graphs <- sim_out[
-    ,
-    .(age, cause, sex, year, well, sick, dead, pop, all.mx, location)
-  ]
-  
-  # Add baseline
-  base_graphs <- base_out[
-    ,
-    .(age, sex, year, cause, well, sick, dead, pop, all.mx, location)
-  ]
-  
+  sim_graphs <- sim_out[, .(
+    age, cause, sex, year, well, sick, dead, pop, all.mx, location
+  )]
   sim_graphs[, intervention := "Sodium reduction"]
-  base_graphs[, intervention := "Baseline"]
   
-  graphs <- rbindlist(list(base_graphs, sim_graphs), use.names = TRUE, fill = TRUE)
+  baseline_country <- baseline_country[, .(
+    age, sex, year, cause, well, sick, dead, pop, all.mx, location
+  )]
+  baseline_country[, intervention := "Baseline"]
   
-  # Aggregate outputs
-  aggregated <- aggregate_sodium_outputs(
-    graphs = graphs,
-    ref    = ref
+  detailed_outputs <- rbindlist(
+    list(baseline_country, sim_graphs),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  
+  pop_for_cost <- detailed_outputs[
+    intervention == "Sodium reduction" &
+      age == 20 &
+      cause == unique(cause)[1],
+    .(year, Pop = pop, location)
+  ]
+  
+  sodium_costs <- calc_sodium_policy_costs(
+    pop_dt = pop_for_cost,
+    per_capita_cost = package_summary$total_unit_cost,
+    start_year = saltyear_start,
+    end_year = saltyear_end,
+    exchange = 1
   )
   
   list(
-    bp_prob_base        = bp_prob_base,
-    bp_prob_salt        = bp_prob_salt,
-    intervention_rates  = intervention_rates,
-    state_outputs       = sim_out,
-    detailed_outputs    = graphs,
-    aggregated_outputs  = aggregated
+    policy_table = policy_dt,
+    selected_policies = package_summary$selected,
+    total_efficacy = package_summary$total_efficacy,
+    total_unit_cost = package_summary$total_unit_cost,
+    sodium_intake = sodium_table,
+    bp_prob_base = bp_prob_base,
+    bp_prob_salt = bp_prob_salt,
+    intervention_rates = intervention_rates,
+    state_outputs = sim_out,
+    detailed_outputs = detailed_outputs,
+    sodium_policy_costs = sodium_costs
   )
 }
