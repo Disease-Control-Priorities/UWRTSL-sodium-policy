@@ -17,7 +17,7 @@ library(gmodels)
 # For forecasting mortality
 library(forecast)
 
-wd <- "C:/Users/wrgar/OneDrive - UW/02Work/WHO-CVD/github/uw-who-cvdtargets/"
+wd <- "C:/Users/wrgar/OneDrive - UW/02Work/ResolveToSaveLives/SodiumPolicy/github/UWRTSL-sodium-policy/"
 
 wd_code <- paste0(wd,"code/")
 
@@ -93,13 +93,20 @@ source("02_load_inputs.R")
 source("03_clean_inputs.R")
 
 #...........................................................
-# 04. Build baseline ----
+# 04. define interventions ----
 #...........................................................
 
-source("04_build_baseline.R")
+source("04_define_interventions.R")
 
 #...........................................................
-# 05. Run model ----
+# 05. build baseline ----
 #...........................................................
 
-source("05_run_scenarios.R")
+source("05_build_baseline.R")
+
+#...........................................................
+# 06. Run model ----
+#...........................................................
+
+# Run Aim 1: multiple interventions
+source("06_run_scenarios_multiple.R")
