@@ -2,7 +2,7 @@
 title: "Health and Economic Returns to Dietary Sodium Reduction"
 subtitle: "A national-scale cardiovascular disease modeling and benefit--cost analysis"
 author: "Resolve to Save Lives (RTSL) -- UW"
-date: ""
+date: "`r format(Sys.Date(), '%B %Y')`"
 output:
   beamer_presentation:
     latex_engine: xelatex
@@ -11,41 +11,14 @@ output:
     toc: true
 classoption: "aspectratio=169"
 header-includes:
-  - \usepackage{booktabs}
-  - \usepackage{array}
-  - \usepackage{longtable}
-  - \usepackage{graphicx}
-  - \usepackage{tikz}
-  - \usepackage{ragged2e}
-  - \usetheme{default}
-  - \usecolortheme{default}
-  - \setlength{\emergencystretch}{2em}
-  - \AtBeginSection[]{}
-  # --- Slide numbers ---
-  - \setbeamertemplate{footline}[frame number]
-  - \setbeamertemplate{navigation symbols}{}
-
-  # --- UW Purple Color Definitions ---
-  - \definecolor{uwpurple}{RGB}{51,0,111}
-
-  # --- Titles and Section Headers ---
-  - \setbeamercolor{title}{fg=uwpurple}
-  - \setbeamercolor{subtitle}{fg=uwpurple}
-  - \setbeamercolor{frametitle}{fg=uwpurple}
-  - \setbeamercolor{section title}{fg=uwpurple}
-
-  # --- Itemize / Enumerate bullets ---
-  - \setbeamercolor{itemize item}{fg=uwpurple}
-  - \setbeamercolor{itemize subitem}{fg=uwpurple}
-  - \setbeamercolor{enumerate item}{fg=uwpurple}
-  - \setbeamercolor{enumerate subitem}{fg=uwpurple}
+  - \input{beamer_preamble.tex}
 fontsize: 11pt
 ---
 
 <!-- ======================================================================
      SETUP — LOAD ARTEFACTS ONLY (zero recomputation)
      ====================================================================== -->
-     
+
 ```{r setup, include=FALSE}
 library(data.table)
 library(ggplot2)
@@ -63,7 +36,7 @@ knitr::opts_chunk$set(
 ```
 
 <!-- ======================================================================
-     Overview
+     1. Study Overview
      ====================================================================== -->
 
 # Study Overview
@@ -77,36 +50,367 @@ knitr::opts_chunk$set(
 - Conduct a full economic benefit--cost analysis to support government decision-making.
 - Focus on RTSL partner countries and on policies that governments can realistically implement.
 
+<!-- ======================================================================
+     2. Recap of Prior Presentation
+     ====================================================================== -->
 
-## RTSL Sodium Reduction Policy Support
+# Recap of Prior Presentation
+
+## Where We Left Off
 
 \justifying
+\footnotesize
 
-- Technical assistance to governments to design and implement mandatory sodium targets for packaged foods.
-- Support for front-of-pack sodium warning labels to inform consumers and incentivize reformulation.
-- Development of nutrition standards for public food procurement in schools, hospitals, and government settings.
-- Assistance with policy drafting, legal design, monitoring systems, and enforcement capacity.
+- **Modeling framework**: Multi-state CVD life-table (Well $\to$ Sick $\to$ Dead) simulated annually over 2026--2050 for ages 20--95, four CVD causes (IHD, stroke, HHD, other CVD), by age $\times$ sex $\times$ country.
+- **Outcome metrics**: Deaths averted, IHD/stroke/HHD cases averted, DALYs averted, plus full benefit--cost analysis (NPV, BCR).
+- **Baseline scenario design**: Five SHAKE-aligned policy bundles with total sodium-reduction efficacy \texttt{salteff} ($\eta$) ranging from 0 (baseline) to 0.250 (full mandatory package).
+- **Causal pathway**: Sodium $\to$ SBP (Filippini dose--response) $\to$ CVD incidence (Ettehad per-10-mmHg RRs) $\to$ life-table transitions.
+- **Deliverables**: Peer-reviewed paper + RTSL report + interactive Shiny tool, originally targeted for end of June 2026 (per Apr 24 timeline).
 
+## Original Timeline (Apr 24 Email)
+
+\justifying
+\footnotesize
+
+Andrew Moran circulated the following milestones on April 24, 2026:
+
+\medskip
+\begin{tabular}{ll}
+\toprule
+\textbf{Date} & \textbf{Milestone} \\
+\midrule
+May 11  & Zina shares preliminary policy/effect-size table with William \\
+May 15  & William circulates inputs to full working group \\
+May 28  & Group call: review inputs, manuscript outline, shell tables/figures \\
+Late June & Review tables/figures, assign writing, pull in RTSL Comms/Design \\
+End of June & Report + paper completed; paper submitted to journal \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\textbf{Status}: Timeline has slipped \textbf{+1--2 months} to accommodate low-sodium salt substitutes (LSSS) integration. New target date to be discussed.
 
 <!-- ======================================================================
-     SCENARIOS
+     3. Email Thread: What's Changed Since April
+     ====================================================================== -->
+
+# Email Thread: What's Changed Since April
+
+## LSS Scope Decision
+
+\justifying
+\footnotesize
+
+Chronology of the key scope change:
+
+\medskip
+\begin{enumerate}
+  \item \textbf{May 19 — Zina} raises the question of how to incorporate the JHU/TGI Huang et al.\ LSSS modeling paper (almost published) without duplicating it. Flags as ``outstanding question.''
+  \item \textbf{May 21 — William} proposes keeping the UW paper focused on SHAKE-mapped interventions; leave LSSS to Matti's team and revisit later.
+  \item \textbf{May 21 — Laura} responds that RTSL \textbf{leadership wants LSSS in the model} --- it is needed for the \textbf{Bloomberg renewal application}. Notes that LSSS is now included in the latest SHAKE package (released week of May 12).
+  \item \textbf{May 21 — David Watkins} accepts; estimates \textbf{+1--2 months} to incorporate LSSS data inputs.
+  \item \textbf{May 21 — Matti Marklund} confirms his paper is at \emph{BMJ} and is methodologically different (comparative-risk-assessment vs.\ UW's state-transition framework). Offers to share inputs.
+\end{enumerate}
+
+## Coordination With JHU/TGI (Matti Marklund)
+
+\justifying
+\footnotesize
+
+Matti (JHU / The George Institute) is offering four inputs for our model:
+
+\medskip
+\begin{enumerate}
+  \item \textbf{GDP-per-capita regression} for predicting \% discretionary salt by country --- from the Bhat/Marklund et al.\ systematic review of sources of sodium \autocite{marklund2022sources}.
+  \item \textbf{Floor/ceiling values} to prevent any country from having 0\% or 100\% discretionary salt.
+  \item \textbf{BP effects of potassium and sodium} from LSSS trials.
+  \item \textbf{Data behind the global LSSS estimate} (Huang et al.\ preprint \autocite{huang2026}).
+\end{enumerate}
+
+\medskip
+\textbf{Note}: Matti will present details at the \textbf{Thursday UW modeling call (4 pm ET)}.
+
+\medskip
+His paper uses a CRA framework (not state-transition), so methodological overlap with UW is limited. Co-authorship/coordination to be confirmed so we do not scoop the \emph{BMJ} submission.
+
+## Sources of Sodium --- Current State
+
+\justifying
+\footnotesize
+
+Zina and Nicole have been compiling literature on sodium shares across three categories:
+
+\medskip
+\begin{itemize}
+  \item \textbf{Packaged foods}: Processed and ultra-processed sources, including salt-based condiments (fish sauce, soy sauce) where separately reported.
+  \item \textbf{Discretionary sources}: Salt or MSG added while cooking at home or at the table.
+  \item \textbf{Outside-the-home}: Restaurants, cafeterias/canteens, street food. Approximately $\frac{1}{3}$ of outside-home assumed to be institutional (public food procurement).
+\end{itemize}
+
+\medskip
+This compilation feeds directly into the \textbf{Sodium Lives Saved Calculator} (next section) and determines how intervention effects are attributed to the correct sodium source.
+
+\medskip
+\textbf{Key method}: Where country-specific data are unavailable, discretionary share is predicted from GDP per capita using the Bhat/Marklund regression \autocite{marklund2022sources}. Processed share is predicted from discretionary share. Floors: 10\% discretionary (USA), 2\% packaged (Ethiopia).
+
+<!-- ======================================================================
+     4. Sodium Lives Saved Calculator
+     ====================================================================== -->
+
+# Sodium Lives Saved Calculator
+
+## Calculator Overview
+
+\justifying
+\scriptsize
+
+\textbf{Purpose}: Estimate national-scale lives saved from a portfolio of sodium-reducing interventions.
+
+\textbf{Six intervention areas}: (A) Public food procurement, (B) Behavior change / mass media, (C) Low-sodium salt substitutes, (D) Front-of-pack labeling, (E) Mandatory salt targets, (F) Fiscal policy / taxation.
+
+\textbf{Source disaggregation}: Sodium intake split into discretionary, packaged, and outside-the-home (with $\sim\!\frac{1}{3}$ of outside-home = institutional). Each intervention acts on its target source.
+
+\textbf{Multiplicative combination}: Effects within a source are combined multiplicatively, not additively, to prevent ${>}$100\% reductions. E.g., tax (13.7\%) + FOPL (15\%) on packaged $\Rightarrow$ $1-(1-0.137)(1-0.15)=26.6\%$.
+
+\textbf{Discretionary share}: Predicted from GDP per capita \autocite{marklund2022sources}; floors at 10\% (USA) and 2\% packaged (Ethiopia).
+
+\textbf{Packaged-food growth}: Projected using Vandevijvere et al.\ 2019 regional growth rates \autocite{vandevijvere2019}, capped at Singapore (4.3 g Na/day from packaged).
+
+\textbf{Demo}: \url{https://dcp-uw.shinyapps.io/salt_demo/} \quad \textbf{Code}: \url{https://github.com/Disease-Control-Priorities/sodium}
+
+## Calculator Overview: Summary of Effect Sizes (Table 1)
+
+\scriptsize
+
+\begin{tabular}{p{2.8cm} p{2.2cm} p{2.0cm} p{1.6cm} p{1.5cm} p{3.0cm}}
+\toprule
+\textbf{Intervention} & \textbf{Source targeted} & \textbf{Study} & \textbf{$\Delta$ mg/day} & \textbf{$\Delta$(\%)} & \textbf{Time horizon} \\
+\midrule
+A. Public food procurement & Institutional & Gase 2011 & $-233$ & 7\% & Modeled \\
+B. Behavior change / media & Discret.\ + Packaged & Do 2016 & --- & 5\% & 1 year \\
+C. LSSS & Discretionary & Huang 2026 & --- & TBD & TBD \\
+D. Front-of-pack labeling & Packaged & Taillie 2024 & $-73.3$ & 13.8\% & 3 years \\
+E. Mandatory salt targets & Packaged & Strauss-Kruger 2022 & $-480$ & 15.2\% & 4.56 years \\
+F. Fiscal policy / taxation & Packaged & Saxena 2025 & $-100$ & 10\% & 20 years \\
+\bottomrule
+\end{tabular}
+
+## A. Public Food Procurement
+
+\footnotesize
+
+\textbf{Source targeted}: Institutional share of outside-home consumption.
+
+\textbf{Selected study}: \textcite{gase2011} --- modeling/simulation study, LA County.
+
+\textbf{Policy simulated}: Two approaches --- (1) mandatory reformulation (reduce sodium content of all foods served); (2) choice architecture + incentives (labeling, promotion, subsidies, lower-Na alternatives).
+
+\textbf{Effect size}: Weighted average across adult settings = \textbf{--233 mg/day ($\approx$7\%)} of 3,329 mg baseline. Applies only to settings where individuals eat $\geq$1 meal/day, $\geq$5 days/week, $\geq$8 weeks.
+
+\textbf{Population affected}: Only \textbf{0.176\%} of LA adult population (13,183 / 7,501,453).
+
+\textbf{Source-of-sodium adjustment}: 233 mg = 20.6\% reduction in sodium content of public meals. For a country where $x\%$ of sodium comes from institutional meals, population-level impact = $0.206 \times x\%$.
+
+\textbf{Caveats}: Modeled, not observed; US-specific setting; very small affected population share.
+
+## B. Behavior Change / Mass Media
+
+\footnotesize
+
+\textbf{Source targeted}: Discretionary + packaged.
+
+\textbf{Candidate study 1}: \textcite{do2016} --- COMBI Vietnam. Multi-component intervention (mass media + school + community + high-risk targeting). \textbf{5\% decrease} in mean sodium excretion after 1-year intervention.
+
+\textbf{Candidate study 2}: \textcite{collins2014} --- UK economic evaluation. Advertising campaign promoting healthy eating. \textbf{2\% [1--5\%]} effect size used in their model. Provenance of these numbers could not be verified in the source references.
+
+\medskip
+
+\begin{alertblock}{Open question}
+Laura's email notes that RTSL funds \textbf{policy change, not mass media for behavior change}. Should this intervention be included in the model? SHAKE framing argues for inclusion; reinvestment case argues for exclusion.
+\end{alertblock}
+
+## C. Low-Sodium Salt Substitutes (LSSS)
+
+\footnotesize
+
+\textbf{Source targeted}: Discretionary salt.
+
+\textbf{Study}: \textcite{huang2026} --- preprint (Marklund/TGI/Polly). Five scenarios:
+
+\scriptsize
+\begin{enumerate}
+  \item Worldwide replacement of \textbf{all salt} (discretionary + non-discretionary)$^{a,b}$
+  \item Worldwide replacement of \textbf{discretionary salt only}$^{a,b}$
+  \item Worldwide replacement of non-discretionary salt only$^{a,b}$
+  \item Replacement of discretionary salt for people with \textbf{diagnosed} hypertension$^{a,c}$
+  \item Replacement of discretionary salt for people with \textbf{treated} hypertension$^{a,c}$
+\end{enumerate}
+\footnotesize
+$^a$ Modeled BP-lowering benefits. $^b$ Includes hyperkalemia harms in CKD G3--G5. $^c$ Assumes clinical screening prevents use in 20\% of CKD G3--G5.
+
+\medskip
+\textbf{Working decision}: Focus on scenarios \textbf{2, 4, 5} (discretionary-only). Pending confirmation.
+
+## C. LSSS: Deaths Averted by Scenario
+
+\scriptsize
+
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Country} & \textbf{Scenario 2} & \textbf{Scenario 4} & \textbf{Scenario 5} \\
+ & (Discret., all) & (Discret., dx HTN) & (Discret., tx HTN) \\
+\midrule
+Global      & 1,860,000 & 600,000 & 470,000 \\
+China       & 689,246   & 205,936 & 169,409 \\
+India       & 277,196   & 54,096  & 46,445  \\
+Nigeria     & 13,214    & 3,257   & 2,047   \\
+Ethiopia    & 8,232     & 1,406   & 811     \\
+Bangladesh  & 36,044    & 7,510   & 5,931   \\
+Malaysia    & 8,798     & 3,200   & 2,930   \\
+Vietnam     & 36,831    & 10,672  & 7,530   \\
+Thailand    & 17,714    & 5,710   & 5,086   \\
+Philippines & 32,899    & 9,106   & 6,533   \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\footnotesize
+Source: \textcite{huang2026}. Scenarios 2, 4, 5 model discretionary-salt replacement only; scenarios 4 and 5 restrict to diagnosed/treated hypertensives respectively.
+
+## D. Front-of-Pack Labeling
+
+\footnotesize
+
+\textbf{Source targeted}: Packaged (no adjustment needed --- estimate already from packaged-food purchases).
+
+\textbf{Selected study}: \textcite{taillie2024} --- Chile FOPWL, observed.
+
+\textbf{Policy}: Mandatory black octagonal warning labels for Na, sugar, saturated fat, and calories. Includes school sales bans and marketing restrictions on labeled products.
+
+\textbf{Population}: 2,844 urban Chilean households, 138,391 household-months, 13 of 16 regions. July 2013 -- June 2019.
+
+\textbf{Effect size}: \textbf{--73.3 mg/capita/day (--13.8\%)} in sodium purchases.
+
+\textbf{Caveat}: Purchases-to-intake translation is uncertain. Nadia's US/Canada work used purchases directly.
+
+\textbf{Alternative}: Mexico 2026 study found --7\% (95\% CI --13\%, --2\%) in packaged-food/beverage \emph{sales} $\approx$ --38 mg/capita/day.
+
+## E. Mandatory Salt Targets
+
+\footnotesize
+
+\textbf{Source targeted}: Packaged foods.
+
+\textbf{Policy}: South African mandatory national sodium reduction legislation (2013); maximum sodium limits across 13 categories of processed foods; targets implemented 2016 and 2019.
+
+\textbf{Selected study}: \textcite{strausskruger2022} --- African-PREDICT. $N=311$ healthy 20--30-year-olds, 24-hr urine. Baseline 2013--2017 vs.\ follow-up 2018--2020; mean follow-up 4.56 yrs.
+
+\textbf{Effect size}: \textbf{--15.2\% sodium/day} (derived). Baseline/follow-up straddle target dates $\to$ likely \textbf{underestimates} true effect.
+
+\textbf{Source adjustment}: ${\sim}$62\% of SA sodium from packaged food \autocite{charlton2005}. Raw adjustment yields 24.5\% reduction relative to packaged source; conservative estimate = 20\%.
+
+\textbf{Alternative SA studies}: Gaziano 2025 (--8.4\%, rural, ${\geq}$40 yrs, spot urine) \autocite{gaziano2025}; Charlton 2021 (--18.4\%, national, methodological concerns) \autocite{charlton2021}.
+
+\textbf{UK targets}: He 2013: --15\% over 7 yrs, voluntary \autocite{he2013}; Song 2023: --19.2\% over 11 yrs \autocite{song2023}.
+
+\textbf{Mexico modeling}: Muci\~{n}o-Sandoval 2025: --25.2\% phase 1, --28.6\% phase 2 \autocite{mucinosandoval2025} --- justifies not using Gaziano's 8\%.
+
+## F. Fiscal Policy / Taxation
+
+\footnotesize
+
+\textbf{Source targeted}: Packaged (no adjustment needed).
+
+\textbf{Selected study}: \textcite{saxena2025} --- Philippines, modeled.
+
+\textbf{Policy}: 20\% tax on foods high in salt and sugar; WHO WPRO nutrient-profile model; 100\% pass-through; industry reformulation (${\leq}$50\% above threshold).
+
+\textbf{Population}: Adults of the Philippines, aged ${\geq}$25 years.
+
+\textbf{Effect size}: \textbf{--100 mg Na/day (--10\%)} at year 20.
+
+\textbf{Caveat}: High relative to other estimates; tax does not include fat.
+
+\textbf{Alternative studies}:
+\begin{itemize}
+  \item India \autocite{roche2026}: --1.63\% over 30 yrs (40\% GST, non-standard tax structure).
+  \item Australia \autocite{davies2026}: --110 mg/day ($\approx$ --3.22\%) over lifetime of current population.
+  \item Australia \autocite{cobiac2017}: --67 mg/day under \$0.30/g Na excise.
+  \item \textcite{dodd2020} systematic review: modeling studies predict 1--11\% decrease in salt intake.
+\end{itemize}
+
+## Sources of Sodium by Country
+
+\scriptsize
+
+\begin{tabular}{p{2.5cm} p{4.5cm} r r r}
+\toprule
+\textbf{Country} & \textbf{Source} & \textbf{\% Discret.} & \textbf{\% Packaged} & \textbf{\% Outside} \\
+\midrule
+South Africa & Charlton et al.\ 2005 & 33--46\% & 54--68\% & --- \\
+Vietnam & Ha (PhD thesis, 2014) & 13.5\% & 85.8\% & --- \\
+Philippines & Amara et al.\ 2021 & 7.8--8.5\% & 90.4--93.3\% & --- \\
+Argentina & Elorriaga et al.\ 2017 & --- & --- & --- \\
+\midrule
+\multicolumn{5}{l}{\emph{Pending: Panama, Paraguay, Peru, Thailand}} \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\footnotesize
+Sources: \autocite{charlton2005,ha2014,amara2021,elorriaga2017}. Where country-specific data are unavailable, discretionary share is predicted from GDP per capita using the Bhat/Marklund regression \autocite{marklund2022sources}; packaged share predicted from discretionary share.
+
+## Projected Growth of Packaged-Food Sales
+
+\footnotesize
+
+\textbf{Source}: \textcite{vandevijvere2019} --- change in ultra-processed food sales volume, 2002--2016.
+
+\medskip
+\begin{tabular}{l r}
+\toprule
+\textbf{Region} & \textbf{Change in UPF sales volume} \\
+\midrule
+South and Southeast Asia & +67.3\% \\
+North Africa and the Middle East & +57.6\% \\
+Central and East Asia & +10.0\% \\
+Western Europe & $-3.8$\% \\
+North America and Australasia & $-2.2$\% \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Used to project rising packaged-food share over the modeling horizon.
+
+\textbf{Cap}: Singapore's 4.3 g Na/day from packaged foods serves as the ceiling.
+
+\textbf{Implication}: Countries in South/SE Asia will see a growing share of sodium from packaged sources, increasing the impact of reformulation, labeling, and taxation interventions over time.
+
+<!-- ======================================================================
+     5. Scenarios (REVISED)
      ====================================================================== -->
 
 # Scenarios
 
-## WHO SHAKE Strategy: Policy Framework
+## SHAKE 2.0 / Revamped SHAKE Package
 
 \justifying
+\footnotesize
 
-- WHO SHAKE provides a comprehensive framework for population-wide sodium reduction.
-- Components include:
-  - **S**urveillance
-  - **H**arness Industry (food reformulation)
-  - **A**dopt Standards for labeling and marketing
-  - **K**nowledge (consumer information)
-  - **E**nvironments (healthier food settings)
-- The largest and most sustained sodium reductions occur when SHAKE components are implemented as a package.
-- This project explicitly models and costs realistic SHAKE policy bundles.
+The WHO SHAKE package (2026 revision) now incorporates \textbf{low-sodium salt substitutes} alongside the original five pillars:
+
+\medskip
+\begin{enumerate}
+  \item \textbf{S}urveillance --- population sodium monitoring
+  \item \textbf{H}arness Industry --- food reformulation (mandatory/voluntary targets)
+  \item \textbf{A}dopt Standards --- front-of-pack labeling, marketing restrictions
+  \item \textbf{K}nowledge --- consumer information and education campaigns
+  \item \textbf{E}nvironments --- healthier food settings (institutional procurement)
+  \item[\textbf{+}] \textbf{Low-Sodium Salt Substitutes (LSSS)} --- newly added to the SHAKE package, reflecting the WHO guideline on LSSS and growing trial evidence
+\end{enumerate}
+
+\medskip
+The largest and most sustained sodium reductions occur when SHAKE components are implemented as a \textbf{package}. Our modeling evaluates individual and combined policy bundles mapped to these components, now including LSSS as a sixth intervention lever.
 
 ## Sodium and Potassium: Complementary Strategies for BP Control
 
@@ -119,46 +423,36 @@ knitr::opts_chunk$set(
 
 - **Synergistic impact**: Lower sodium combined with higher potassium intake produces larger reductions in BP and stroke risk than sodium reduction alone.
 - **Public health strategy**: Many national policies incorporate potassium-enriched salt substitutes (e.g., 75% NaCl / 25% KCl) to simultaneously reduce sodium and address widespread potassium deficiencies.
-- **Physiological balancing**: Potassium counteracts sodium’s adverse effects, lowering HTN risk.
+- **Physiological balancing**: Potassium counteracts sodium's adverse effects, lowering HTN risk.
 - **Targeted goals**: guidelines emphasize a dual approach: reducing sodium intake and increasing daily potassium consumption.
 
-**Common Policy Approaches**
+**LSSS is the operational instrument that delivers both sodium reduction and potassium increase simultaneously.**
 
-- Promotion of whole, minimally processed foods (fruits, vegetables, legumes) that are naturally high in potassium and low in sodium.
+## Scenario Definitions and Default Efficacies
 
-# Data Sources
+\footnotesize
 
-## Data Sources and Key Variables
+Six scenarios; $q_{\text{pkgd}} = q_{\text{outside}} = 30\%$; $u_p = \$0.05$ per component; scale-up 2026--2030.
 
-```{r data-sources-table}
-ds <- data.table(
-  Source    = c("GBD 2023 (IHME)","GBD 2019 (IHME)","Ettehad et al.\\ 2016",
-                "UNWPP 2024 (UN)","NCD-RisC","Country-specific"),
-  Variables = c(
-    "IR, CF, prevalence, background mortality (age/sex/country)",
-    "Relative risks per 10 mmHg SBP increase (IHD, stroke, HHD, by age)",
-    "Trial effect sizes per BP category; diabetes-stratified",
-    "Population projections 2019--2050 (single-year age, sex, country)",
-    "Baseline HTN control rates ($C_0$); BP distribution by country",
-    "HTN control targets 2030 (Progress / Ambitious / Aspirational)"
-  ),
-  Role = c(
-    "Baseline transition rates; initial states",
-    "Anchor BP-bin incidence; normalisation factor $\\alpha$",
-    "Treatment effect sizes by BP bin $\\times$ cause",
-    "Cohort sizes; rate denominators",
-    "$C_0$; $P(\\text{BP}_{\\text{cat}})$",
-    "$C_{\\text{target}}$ per scenario"
-  )
-)
-kable(ds, align="lll", escape=FALSE, booktabs=TRUE, format="latex",
-      col.names=c("Source","Variables extracted","Role in model")) |>
-  kable_styling(latex_options=c("striped","hold_position"),
-                font_size=8, full_width=TRUE) |>
-  column_spec(1, bold=TRUE, width="2.8cm") |>
-  column_spec(2, width="6.8cm") |>
-  column_spec(3, width="3.4cm")
-```
+\medskip
+\begin{tabular}{lcc}
+\toprule
+\textbf{Scenario} & \textbf{Active policies} & \textbf{$\eta$ (salteff)} \\
+\midrule
+Baseline                  & none             & 0 \\
+Reformulation -- mandatory & reform only      & $0.20 \times 0.30 = 0.060$ \\
+Reformulation -- voluntary & reform only      & $0.15 \times 0.30 = 0.045$ \\
+Full package -- mandatory  & reform + label + media + support & $0.060+0.030+0.100+0.060 = 0.250$ \\
+Full package -- voluntary  & reform + label + media + support & $0.045+0.030+0.100+0.060 = 0.235$ \\
+LSSS (discretionary)       & LSSS (scenarios 2/4/5)  & TBD -- pending Marklund inputs \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Per-capita annual costs: \$0.05 (reformulation-only) to \$0.20 (full package). LSSS costing TBD.
+
+\medskip
+\scriptsize \textbf{Note}: LSSS efficacy values to be calibrated from Huang et al.\ discretionary-only scenarios (2, 4, 5) once Matti shares BP-effect inputs at Thursday's call.
 
 
 # Mathematical Model
@@ -173,7 +467,7 @@ nodes <- data.table(
 )
 arr_main <- data.table(
   x1=c(1.40,3.60), y1=c(1,1), x2=c(2.80,5.00), y2=c(1,1),
-  lbl=c("IR \u00d7 \u03b5_IR","CF \u00d7 \u03b5_CF")
+  lbl=c("IR × ε_IR","CF × ε_CF")
 )
 arr_bg <- data.table(
   x1=c(1.0,3.2,3.0), y1=c(1.25,1.25,1.0),
@@ -206,149 +500,6 @@ ggplot() +
 ```
 
 \small \textbf{Key:} $\varepsilon_{IR}$, $\varepsilon_{CF}$ = multiplicative effect ratios from the intervention module $\cdot$ BG.mx = background mortality $\cdot$ COVID-19 excess mortality applied 2020--2021 only
-
-## CVD Modeling Engine
-
-\justifying
-
-- Population cohort model linking sodium intake to blood pressure and cardiovascular outcomes.
-- Uses country-specific baseline CVD incidence, mortality, and population age structure.
-- Policy scenarios translate sodium reductions into blood pressure changes using established dose--response relationships.
-- Resulting changes in heart attacks, strokes, and CVD deaths are projected over time.
-
-
-## Modeling Assumptions
-
-\begin{columns}[T]
-\begin{column}{0.47\textwidth}
-\textbf{Model structure}
-\begin{itemize}\footnotesize
-  \item Discrete-time annual step (2019--2050); ages 20--95
-  \item Four causes modeled independently
-  \item COVID-19 excess mortality applied 2020--2021 only; no long-term effects
-\end{itemize}
-
-\medskip
-\textbf{Intervention mechanics}
-\begin{itemize}\footnotesize
-  \item Linear scale-up 2026 $\to$ 2030; held constant 2030--2050
-\end{itemize}
-\end{column}
-\end{columns}
-
-
-# Economic Evaluation
-
-## Health and Economic Benefits Estimation
-
-\justifying
-
-- Reduced sodium intake leads to fewer cardiovascular events and premature deaths.
-- Health outcomes are summarized as deaths and DALYs averted.
-- Health gains are monetized using the standard economic valuation of mortality risk reduction.
-- Averted health-care expenditures are estimated and included as additional economic benefits.
-
-## Costing the SHAKE Policy Package
-
-\justifying
-
-- Costs are estimated using an ingredients-based regulatory costing approach.
-- Government costs include policy design, administration, monitoring, and enforcement.
-- Industry costs include reformulation, testing, and labeling compliance, counted as real resource costs.
-- Both start-up and ongoing recurrent costs are explicitly modeled over time.
-
-## Costing the SHAKE Policy Package (Example)
-
-\scriptsize
-
-\begin{tabular}{p{2.2cm} p{3.1cm} p{1.7cm} p{1.6cm} p{1.8cm} p{2.3cm}}
-\toprule
-\textbf{SHAKE Component} & \textbf{Activity} & \textbf{Cost Category} & \textbf{Frequency} & \textbf{Coverage} & \textbf{Cost Bearer} \\
-\midrule
-S -- Surveillance & Population sodium survey & Program & Every 3--5 yrs & National & Government \\
-S -- Surveillance & Food sodium monitoring & Program & Annual & Processed foods & Government \\
-H -- Harness Industry & Set reformulation targets & Program & One-off & Key food categories & Government \\
-H -- Harness Industry & Product reformulation & Compliance & One-off + transition & Affected SKUs & Industry \\
-A -- Labeling & Front-of-pack labeling policy & Program & One-off & National & Government \\
-A -- Labeling & Label changes & Compliance & One-off & Affected SKUs & Industry \\
-K -- Knowledge & Mass media campaign & Program & Annual & Population reached & Government \\
-E -- Environment & School meal standards & Program & Annual & Schools & Government \\
-E -- Environment & Institutional food reformulation & Compliance & One-off + annual & Institutions & Vendors \\
-\bottomrule
-\end{tabular}
-
-## Full Benefit--Cost Analysis Outputs
-
-\justifying
-
-- Health benefits and implementation costs are combined to estimate net present value.
-- Benefit--cost ratios and return on investment are calculated for each policy scenario.
-- Results allow comparison across individual SHAKE components and bundled strategies.
-- Sensitivity analyses assess robustness to key assumptions and uncertainties.
-
-
-# Decision Tool
-
-## Integrated Web-Based Decision Tool
-
-\justifying
-
-- All modeling and economic components are integrated into an interactive \texttt{R Shiny} web application.
-- Users can customize country-specific inputs, policy coverage, and implementation timelines.
-- The tool enables real-time comparison of alternative policy scenarios and assumptions.
-- Designed to support evidence-based policymaking and stakeholder engagement.
-
-
-# Discussion
-
-## Why This Analysis Matters for RTSL
-
-\justifying
-
-- Provides finance-ministry--ready evidence on the economic value of sodium reduction policies.
-- Strengthens regulatory impact assessments and national investment cases.
-- Supports prioritization of high-return noncommunicable disease prevention strategies.
-- Scalable framework applicable across multiple countries and policy contexts.
-
-## Next Steps
-
-\justifying
-
-- Finalize country-specific data inputs and validate assumptions with national stakeholders.
-- Complete deployment and testing of the interactive web tool.
-- Use results to support policy adoption, financing, and sustained implementation.
-- Position sodium reduction as a high-return national investment in partner countries.
-
-
-<!-- ======================================================================
-     APPENDIX
-     ====================================================================== -->
-
-# Appendix
-
-## Notation: Core Model
-
-\footnotesize
-
-Indices: age $a$, sex $s$, cause $c$, location $\ell$, year $t$, BP category $b$.
-
-\medskip
-\begin{tabular}{ll}
-\toprule
-\textbf{Symbol} & \textbf{Meaning} \\
-\midrule
-$IR_{a,s,c,\ell,t}$ & Baseline cause-specific incidence rate \\
-$CF_{a,s,c,\ell,t}$ & Baseline case fatality rate \\
-$BG.mx_{a,s,c,\ell,t}$ & Background mortality (disease state) \\
-$BG.mx.all_{a,s,\ell,t}$ & All-cause background mortality \\
-$PREVt0 / DIS.mx.t0$ & Baseline prevalence / disease mortality \\
-$N_{a,s,\ell,t}$ & Population size \\
-$P(b \mid a,s,\ell,t)$ & Probability of BP category $b$ \\
-$S_{a,s,\ell,t}$ & Baseline mean sodium intake (g/day) \\
-$RBP_{a,s,\ell,t}$ & Share of population with raised BP \\
-$D_{a,s,b,\ell,t}$ & Diabetes prevalence \\
-\bottomrule
-\end{tabular}
 
 ## Policy Package: Efficacy
 
@@ -419,6 +570,99 @@ S_{a,s,\ell,t} - 2 & \text{if } S - \Delta S^{*} < 2 \\
 \end{cases}
 $$
 
+
+# Economic Evaluation
+
+## Costing the SHAKE Policy Package
+
+\justifying
+
+- Costs are estimated using an ingredients-based regulatory costing approach.
+- Government costs include policy design, administration, monitoring, and enforcement.
+- Industry costs include reformulation, testing, and labeling compliance, counted as real resource costs.
+- Both start-up and ongoing recurrent costs are explicitly modeled over time.
+
+## Costing the SHAKE Policy Package (Example)
+
+\scriptsize
+
+\begin{tabular}{p{2.2cm} p{3.1cm} p{1.7cm} p{1.6cm} p{1.8cm} p{2.3cm}}
+\toprule
+\textbf{SHAKE Component} & \textbf{Activity} & \textbf{Cost Category} & \textbf{Frequency} & \textbf{Coverage} & \textbf{Cost Bearer} \\
+\midrule
+S -- Surveillance & Population sodium survey & Program & Every 3--5 yrs & National & Government \\
+S -- Surveillance & Food sodium monitoring & Program & Annual & Processed foods & Government \\
+H -- Harness Industry & Set reformulation targets & Program & One-off & Key food categories & Government \\
+H -- Harness Industry & Product reformulation & Compliance & One-off + transition & Affected SKUs & Industry \\
+A -- Labeling & Front-of-pack labeling policy & Program & One-off & National & Government \\
+A -- Labeling & Label changes & Compliance & One-off & Affected SKUs & Industry \\
+K -- Knowledge & Mass media campaign & Program & Annual & Population reached & Government \\
+E -- Environment & School meal standards & Program & Annual & Schools & Government \\
+E -- Environment & Institutional food reformulation & Compliance & One-off + annual & Institutions & Vendors \\
+\bottomrule
+\end{tabular}
+
+<!-- ======================================================================
+     8. Team Discussion
+     ====================================================================== -->
+
+# Team Discussion
+
+## Pending Decisions
+
+\scriptsize
+
+\begin{enumerate}
+  \item \textbf{LSSS scenarios} --- Confirm we model scenarios 2, 4, 5 (discretionary-only: all adults / diagnosed HTN / treated HTN). Or do we also try scenario 1 (all salt)?
+  \item \textbf{Mass media} --- In or out? Laura: RTSL funds policy change, not media for behavior change. SHAKE framing argues for inclusion in the paper; reinvestment case argues for exclusion.
+  \item \textbf{Heterogeneity of observation periods} --- Effect sizes measured over very different time windows (1 yr $\to$ 20 yrs). How do we harmonize? Options: (a) assume effects are end-state, apply at full scale-up; (b) apply linearly over observed window; (c) use a country-tier heuristic (low/middle/high).
+  \item \textbf{Source-of-sodium estimates} --- How hard do we push for country-specific shares vs.\ fall back on Marklund's GDP regression with floors/ceilings? Flag condiment-heavy countries where the packaged-food transition is escalating.
+  \item \textbf{Integration with Marklund/TGI} --- Confirm we use his discretionary-vs-GDP regression and BP-effect inputs; clarify co-authorship/coordination so we do not scoop the \emph{BMJ} paper.
+  \item \textbf{Timeline} --- Original end-of-June paper submission is now +1--2 months for LSSS integration. New target?
+  \item \textbf{Bloomberg renewal deliverable} --- What does the renewal application need from us, and by when, that is distinct from the paper?
+\end{enumerate}
+
+## Agenda for Thursday's Call
+
+\footnotesize
+
+\begin{enumerate}
+  \item \textbf{Matti presents} his discretionary-vs-packaged disaggregation approach ($\sim$15 min) --- GDP regression, floor/ceiling values, BP effects of K and Na.
+  \item \textbf{Walk through the 6 interventions} in the Sodium Lives Saved Calculator --- confirm effect sizes and source assignments.
+  \item \textbf{Decide pending items 1--4}: LSSS scenarios, mass media inclusion, observation-period harmonization, country-specific vs.\ regression-based sodium shares.
+  \item \textbf{Lock revised timeline} for paper + report + Bloomberg renewal deliverable.
+\end{enumerate}
+
+<!-- ======================================================================
+     APPENDIX
+     ====================================================================== -->
+
+# Appendix
+
+## Notation: Core Model
+
+\footnotesize
+
+Indices: age $a$, sex $s$, cause $c$, location $\ell$, year $t$, BP category $b$.
+
+\medskip
+\begin{tabular}{ll}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+$IR_{a,s,c,\ell,t}$ & Baseline cause-specific incidence rate \\
+$CF_{a,s,c,\ell,t}$ & Baseline case fatality rate \\
+$BG.mx_{a,s,c,\ell,t}$ & Background mortality (disease state) \\
+$BG.mx.all_{a,s,\ell,t}$ & All-cause background mortality \\
+$PREVt0 / DIS.mx.t0$ & Baseline prevalence / disease mortality \\
+$N_{a,s,\ell,t}$ & Population size \\
+$P(b \mid a,s,\ell,t)$ & Probability of BP category $b$ \\
+$S_{a,s,\ell,t}$ & Baseline mean sodium intake (g/day) \\
+$RBP_{a,s,\ell,t}$ & Share of population with raised BP \\
+$D_{a,s,b,\ell,t}$ & Diabetes prevalence \\
+\bottomrule
+\end{tabular}
+
 ## Scale-Up Time Path
 
 \footnotesize
@@ -441,7 +685,7 @@ Default scenario parameters: $T_{\text{start}} = 2026$, $T_{\text{full}} = 2030$
 
 \footnotesize
 
-Filippini-style dose--response, differentiating raised- and normal-BP subgroups:
+Filippini-style dose--response \autocite{Filippini2021}, differentiating raised- and normal-BP subgroups:
 
 $$
 \Delta SBP_{a,s,\ell,t}
@@ -483,7 +727,7 @@ $$
 
 \footnotesize
 
-Ettehad (Ettehad et al.\ 2016) provides per-10-mmHg RR reductions by BP category and cause from randomised trial meta-analysis.
+\textcite{ettehad2016} provides per-10-mmHg RR reductions by BP category and cause from randomised trial meta-analysis.
 
 \medskip
 \textbf{Diabetes-weighted cumulative effect} for bin $b$, cause $c$:
@@ -569,25 +813,7 @@ $$
 \textbf{Initial conditions} ($t=t_0$ or $a=20$):
 $\;Sick_0 = N \cdot PREVt0;\; Dead_0 = N \cdot DIS.mx.t0;\; Well_0 = N(1-PREVt0-BG.mx)$
 
-## Scenario Definitions and Default Efficacies
+## References {.allowframebreaks}
 
-\footnotesize
-
-Five scenarios; $q_{\text{pkgd}} = q_{\text{outside}} = 30\%$; $u_p = \$0.05$ per component; scale-up 2026--2030.
-
-\medskip
-\begin{tabular}{lcc}
-\toprule
-\textbf{Scenario} & \textbf{Active policies} & \textbf{$\eta$ (salteff)} \\
-\midrule
-Baseline                  & none             & 0 \\
-Reformulation -- mandatory & reform only      & $0.20 \times 0.30 = 0.060$ \\
-Reformulation -- voluntary & reform only      & $0.15 \times 0.30 = 0.045$ \\
-Full package -- mandatory  & reform + label + media + support & $0.060+0.030+0.100+0.060 = 0.250$ \\
-Full package -- voluntary  & reform + label + media + support & $0.045+0.030+0.100+0.060 = 0.235$ \\
-\bottomrule
-\end{tabular}
-
-\medskip
-Per-capita annual costs: \$0.05 (reformulation-only) to \$0.20 (full 4-component package).
-
+\tiny
+\printbibliography[heading=none]

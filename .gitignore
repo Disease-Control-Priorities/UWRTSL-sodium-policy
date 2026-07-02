@@ -8,6 +8,11 @@
 data/raw/**/*.*
 !data/raw/**/*.md
 
+# Ignore everything in library except markdown
+library/**/*.*
+!library/**/*.md
+
+
 # Ignore RStudio project user files
 .Rproj.user
 

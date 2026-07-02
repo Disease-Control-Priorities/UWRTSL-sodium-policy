@@ -1,0 +1,170 @@
+---
+title: "Health and Economic Returns to Dietary Sodium Reduction: Follow-up Discussion"
+subtitle: "Uncertainty types and a value-of-information frame for the source-of-sodium decision"
+author: "Resolve to Save Lives (RTSL) -- UW"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output:
+  beamer_presentation:
+    latex_engine: xelatex
+    keep_tex: false
+    slide_level: 2
+    toc: false
+classoption: "aspectratio=169"
+header-includes:
+  - \input{beamer_preamble.tex}
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, message = FALSE, warning = FALSE,
+  fig.align = "center", out.width = "100%"
+)
+```
+
+<!-- ======================================================================
+     SLIDE 1 — Recap + where this leaves us
+     ====================================================================== -->
+
+# Follow-up Discussion
+
+## Recap: Where We Landed Last Time
+
+\justifying
+\footnotesize
+
+\textbf{Agreed:}
+\begin{itemize}
+  \item LSSS in via potassium supplementation; focus scenarios \textbf{4, 5} (discretionary-only).
+  \item Do \textbf{not} map interventions to SHAKE pillars --- the revamped SHAKE no longer frames them that way.
+  \item Counterfactual (prevention) framing $>$ pure lives-maximization (e.g. Ethiopia packaged-food policy kept despite low consumption).
+  \item Primary deliverable is the \textbf{BP-reinvestment proposal} (Sep 2026), not the paper.
+\end{itemize}
+
+\medskip
+\begin{alertblock}{The unresolved blocker (Pending \#4)}
+\footnotesize
+Source-of-sodium shares are \textbf{missing or low-quality} for most of the 29+ countries. The combined approach --- country data where available, Bhat/Marklund GDP regression elsewhere --- leaves open: \emph{how hard do we push for better data?} RTSL is wary (past difficulty estimating sodium sources); Laura notes GDP misses condiment/bouillon-heavy contexts (Vietnam, Nigeria).
+\end{alertblock}
+
+\medskip
+\centering \textbf{Today: reframe this from an opinion debate into a quantity we can estimate.}
+
+<!-- ======================================================================
+     SLIDE 2 — Why source-of-sodium uncertainty matters here
+     ====================================================================== -->
+
+## Why This Particular Gap Bites
+
+\justifying
+\footnotesize
+
+The source split is not a side input --- it is the \textbf{router} that decides which intervention touches which sodium, so error propagates straight into lives saved and into the BCR.
+
+\medskip
+\begin{itemize}
+  \item Each lever acts on \textbf{one} source (FOPL/targets/tax $\to$ packaged; procurement $\to$ institutional; LSSS/media $\to$ discretionary).
+  \item A wrong discretionary-vs-packaged split \textbf{re-weights the entire portfolio}, not one cell.
+  \item GDP regression is a \textbf{point predictor with floors} (10\% discret. USA, 2\% packaged Ethiopia) --- it carries prediction error we currently ignore.
+  \item Shares are \textbf{time-sensitive} and packaged share is \textbf{growing} (Vandevijvere); a stale share biases the 2026--2050 trajectory, not just the base year.
+\end{itemize}
+
+\medskip
+\begin{block}{}
+\footnotesize
+So the question "country data vs.\ regression" is really: \textbf{is the decision (which policy mix to fund) sensitive to how wrong the share is?} That is a value-of-information question.
+\end{block}
+
+<!-- ======================================================================
+     SLIDE 3 — Taxonomy of uncertainty (Briggs/ISPOR)
+     ====================================================================== -->
+
+## Separating the Types of Uncertainty
+
+\justifying
+\scriptsize
+
+Decision-model good practice distinguishes four kinds; conflating them is the usual error \autocite{briggs2012}.
+
+\medskip
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{>{\bfseries}p{2.3cm} p{4.6cm} p{4.6cm}}
+\toprule
+\textbf{Type} & \textbf{In our model} & \textbf{Handled by} \\
+\midrule
+Stochastic / variability & Individual-level noise & N/A --- we run a cohort life-table, not microsim \\
+Parameter & Effect sizes, RRs, \textbf{source shares}, elasticities & Probabilistic sensitivity analysis (PSA) over distributions \\
+Heterogeneity & Real differences by age $\times$ sex $\times$ country & Stratify --- already in the model, do \textbf{not} average away \\
+Structural & Multiplicative combining, Well$\to$Sick$\to$Dead, GDP-predicts-share assumption & Scenario analysis; report as discrete alternatives \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\begin{uncertaintyblock}{Implication for the source-of-sodium debate}
+\scriptsize
+The missing-data problem spans \textbf{two} types: \textbf{parameter} uncertainty (what \emph{is} the share, given the regression's prediction interval) and \textbf{structural} uncertainty (is GDP even the right predictor for condiment-heavy countries). PSA addresses the first; a named scenario / sensitivity case addresses the second. We should not let one stand in for the other.
+\end{uncertaintyblock}
+
+<!-- ======================================================================
+     SLIDE 4 — Value of Information
+     ====================================================================== -->
+
+## Value of Information: Pricing the Data Gap
+
+\justifying
+\footnotesize
+
+VOI asks: \textbf{what is the expected cost of deciding under current uncertainty}, and how much of that a better measurement would remove \autocite{wilson2015voi}.
+
+\medskip
+\begin{itemize}
+  \item \textbf{EVPI} --- expected value of \emph{perfect} information: the loss from possibly choosing the wrong policy mix because shares are uncertain. An \textbf{upper bound} on what any data collection could be worth.
+  \item \textbf{EVPPI} --- partial: isolates the value of resolving the \textbf{source-share parameters specifically}, holding effect sizes etc.\ fixed. This is the number that answers Pending \#4.
+  \item \textbf{EVSI} --- sample: value of a \emph{realistic} study (e.g.\ a 24-hr urine sub-study, $n$ and cost specified), net of its cost.
+\end{itemize}
+
+\medskip
+\begin{exampleblock}{Why this is the right tool for RTSL, not academic decoration}
+\footnotesize
+It converts "should we fund a survey / push for country data" into \textbf{expected lives or \$ at stake}. If EVPPI on source shares is near zero, the GDP regression is \emph{good enough} and we stop arguing --- a defensible reason \textbf{not} to collect data. If it is large, that is a funded, prioritized line item for the reinvestment proposal: VOI doubles as a data-collection call.
+\end{exampleblock}
+
+<!-- ======================================================================
+     SLIDE 5 — Proposed approach + decisions to make today
+     ====================================================================== -->
+
+## Proposed Approach \& Decisions for Today
+
+\justifying
+\footnotesize
+
+\textbf{Minimal, reinvestment-aligned implementation:}
+\begin{enumerate}
+  \item Put a \textbf{distribution} on the GDP-regression share (use Bhat/Marklund prediction interval), not a point estimate.
+  \item Run \textbf{PSA} over source shares $+$ key effect sizes $\to$ CIs on deaths/DALYs averted and BCR.
+  \item Compute \textbf{EVPPI on source shares} for a handful of representative / high-leverage countries (not all 29).
+  \item Report GDP-predicts-share as an explicit \textbf{structural scenario} vs.\ country data where it exists.
+\end{enumerate}
+
+\medskip
+\begin{alertblock}{Decisions needed}
+\footnotesize
+\begin{itemize}
+  \item Does RTSL want EVPPI in the proposal as a \textbf{data-collection justification}, or only PSA intervals on the headline numbers? (Past skepticism noted.)
+  \item Which 3--5 countries are the \textbf{leverage cases} (condiment-heavy + escalating packaged share) for partial VOI?
+  \item Scope: full PSA + VOI, or PSA-only for Sep, VOI for the paper?
+\end{itemize}
+\end{alertblock}
+
+# References
+
+## References
+
+\tiny
+
+\begin{thebibliography}{9}
+\bibitem{briggs2012} Briggs AH, Weinstein MC, Fenwick EAL, et al. (2012). Model Parameter Estimation and Uncertainty Analysis: ISPOR-SMDM Modeling Good Research Practices Task Force-6. \emph{Value in Health} 15(6): 835--842.
+\bibitem{wilson2015voi} Wilson ECF (2015). A Practical Guide to Value of Information Analysis. \emph{PharmacoEconomics} 33: 105--121. (PMC7612603).
+\bibitem{marklund2022sources} Bhat S, et al. (2020). A Systematic Review of the Sources of Dietary Salt Around the World. \emph{Advances in Nutrition} 11(3): 677--686.
+\bibitem{vandevijvere2019} Vandevijvere S, et al. (2019). Global Trends in Ultraprocessed Food and Drink Product Sales. \emph{Obesity Reviews} 20(S2): 10--19.
+\end{thebibliography}
