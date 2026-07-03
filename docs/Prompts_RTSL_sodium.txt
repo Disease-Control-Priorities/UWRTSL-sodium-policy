@@ -1,0 +1,163 @@
+# Task: Create 07_run_interventions.R (source-specific sodium interventions)
+
+## Context
+
+Refactor `06_run_scenarios_targets.R` into a NEW file `07_run_interventions.R` that produces
+the same per-country `out_model` `.rds` outputs, but where sodium intake is split by SOURCE and
+each intervention's effect size is applied ONLY to the source(s) it can affect.
+
+Read these code/ files first to understand the current pipeline before writing anything:
+- `06_run_scenarios_targets.R`   (the script to refactor — this is the base)
+- `05_build_baseline.R`          (how b_rates, data.in, inc are built)
+- `04_define_intervention.R`     (older sodium→BP logic, for reference)
+
+Do NOT modify 04, 05, or 06. Create 07 as a new file.
+
+## Core concept
+
+The current `06` treats sodium as a single pool and applies one blended `salteff` fraction to the
+whole `salt` column. Replace this: split baseline sodium into five sources, apply each intervention's
+documented relative reduction to only its target source(s), then collapse back to a single
+total-intake reduction fraction:
+
+    total_reduction_fraction = Σ_over_sources ( source_share_s × effect_size(intervention, s) )
+
+That resulting fraction is exactly the `salteff` that the existing `calculate_sodium_impact_etihad()`
+(saltmet = "percent") already expects. So EVERYTHING downstream of the salteff fraction stays
+UNCHANGED: `calculate_sodium_impact_etihad()`, `project.all()`, the state-transition loop, the
+output schema, the parallel loop structure, and `validate_intervention_results()`. The new
+source logic lives entirely upstream in the scenario configuration.
+
+## CLARIFICATION 4 — Intervention selection (single, all, or user-specified subset)
+
+The model must support running ANY combination of interventions, controlled by the user:
+
+- A SINGLE intervention on its own (e.g. just `fopl`).
+- ALL interventions blocked together as one combined package (compose per source with
+  `1 − Π(1 − eff_i,s)` so multiple policies hitting the same source don't double-count).
+- Any USER-SPECIFIED SUBSET of interventions (e.g. `c("fopl", "salt_targets")` run as one
+  combined package, or as separate scenarios — see below).
+
+Implement this with a single user-facing control at the top of the script — a variable such as:
+
+    # Which interventions to model. Options:
+    #   - a single name:            "fopl"
+    #   - a character vector:       c("fopl", "salt_targets", "fiscal")
+    #   - the keyword "all":        every defined intervention, composed into one package
+    selected_interventions <- "all"
+
+Behavior:
+- `compute_total_efficacy()` already accepts a vector of intervention names and composes them per
+  source, so a single name, a subset, or all names all flow through the same code path — a single
+  intervention is just the one-element case, and "all" expands to every defined intervention.
+- Build `scenario_configs` dynamically from `selected_interventions` rather than hard-coding a fixed
+  scenario list:
+    * Always include `baseline` (salteff = 0).
+    * If the user wants each intervention scored INDIVIDUALLY, generate one scenario per name in the
+      vector (plus optionally a combined `full_package` scenario).
+    * If the user wants them COMBINED, generate a single package scenario from the whole vector.
+  Expose this with a second control, e.g.:
+
+    # "individual" = one scenario per selected intervention (+ baseline)
+    # "combined"   = all selected interventions modelled together as one package (+ baseline)
+    # "both"       = individual scenarios AND a combined package
+    scenario_mode <- "both"
+
+- "all" as the value of `selected_interventions` must resolve to the full set of defined
+  interventions (public_procurement, media_campaign, fopl, salt_targets, fiscal, lss).
+- Validate that every name in `selected_interventions` is a defined intervention; error clearly if not.
+
+## The five sodium sources
+
+discretionary, packaged, restaurant, public, inherent  (shares sum to 1.0 per country).
+`inherent` is NEVER targeted by any intervention.
+
+## Effect sizes and source mapping (relative reduction applied to the target source only)
+
+Define each as a named, documented constant at the top of the file with a source comment:
+- Public food procurement & service → `public`: 20%   (EFF_PROCUREMENT_PUBLIC <- 0.20)
+- Behavior change / media campaigns → `discretionary` + `packaged`: 1.0%   (EFF_MEDIA <- 0.010)
+- Front-of-pack labelling (FOPL)   → `packaged`: 13.8%   (EFF_FOPL_PACKAGED <- 0.138)
+- Salt targets                     → `packaged`: 20% (floor 15%)   (EFF_SALTTARGETS_PACKAGED <- 0.20)
+- Fiscal policies (tax)            → `packaged`: 10%   (EFF_FISCAL_PACKAGED <- 0.10)
+- Low-sodium salt substitutes (LSS)→ `discretionary`: placeholder %   (EFF_LSS_DISCRETIONARY <- 0.15, FLAGGED as placeholder, config hook)
+
+## CLARIFICATION 1 — Source-share data file (BUILD IT)
+
+There is NO existing by-source file. Create one. Build a per-country source-share table
+(`discretionary, packaged, restaurant, public, inherent`, each row summing to 1.0) hard-coded from
+the document's country tables. Use these values (already normalized to 100% in the document):
+
+    Vietnam:      discretionary 10.9%, packaged 64.1%, restaurant 10.0%, public 5.0%, inherent 10.0%
+    Philippines:  discretionary 32.0%, packaged 43.0%, restaurant 10.0%, public 5.0%, inherent 10.0%
+    Bangladesh:   discretionary 73.8%, packaged  6.2%, restaurant  5.0%, public 5.0%, inherent 10.0%
+    China:        discretionary 59.4%, packaged 17.3%, restaurant  8.3%, public 5.0%, inherent 10.0%
+    Ethiopia:     discretionary 78.3%, packaged  1.7%, restaurant  5.0%, public 5.0%, inherent 10.0%
+    India:        discretionary 73.8%, packaged  6.2%, restaurant  5.0%, public 5.0%, inherent 10.0%
+    Malaysia:     discretionary 32.0%, packaged 43.0%, restaurant 10.0%, public 5.0%, inherent 10.0%  (Philippines proxy)
+    Thailand:     discretionary 23.5%, packaged 14.1%, restaurant 47.3%, public 5.0%, inherent 10.0%
+
+Save this table to disk as a new file `sodium_source_shares.rds` in `wd_data` (mirroring how
+`prepare_sodium_data()` reads `sodium_policy_scenarios.rds`), and also load it in-script.
+Use the model's canonical country/location names (match the naming conventions and `name_map`
+used in `05_build_baseline.R`, e.g. "Viet Nam"). Add a `build_sodium_source_shares()` function
+that constructs and writes this table, so it's reproducible.
+
+## CLARIFICATION 3 — Default for unlisted countries (AVERAGE OF DOCUMENT)
+
+For any country NOT in the table above, use a DEFAULT row equal to the average across the listed
+document countries (simple mean of each source share across the rows above, then renormalize to
+sum to exactly 1.0). Add this as a `default` fallback used whenever a country isn't found.
+Every country in `data.in` must resolve to a valid share vector.
+
+## CLARIFICATION 2 — LSS handling (discretionary only, placeholder + config hook)
+
+Model LSS as an effective % reduction in the `discretionary` source ONLY. Use a reasonable
+placeholder (0.15 = 15%) exposed as a config parameter (`EFF_LSS_DISCRETIONARY`) and clearly
+commented as a placeholder to be finalized later. LSS must run end-to-end with this stub.
+
+## Implementation steps
+
+1. Start 07 as a copy of 06. Keep Sections 1–2 (GBD/ETIHAD RR), Section 4 (epi helpers),
+   Section 7 (baseline cleaning), Section 8 (`project.all`), Section 11 (comparison/validation)
+   UNCHANGED.
+
+2. REMOVE `default_sodium_policy_table()` and `summarize_sodium_policy_package()`. Replace with:
+   - `build_sodium_source_shares()` → writes/returns the per-country share table + default row.
+   - `intervention_effects`: a data.table with one row per (intervention, source) giving the
+     relative reduction (0/absent for untargeted sources).
+   - `compute_total_efficacy(intervention_names, country, source_shares, intervention_effects)`:
+     returns the single total-intake fraction. For PACKAGES (multiple interventions), compose per
+     source using `1 − Π(1 − eff_i,s)` so multiple policies hitting the same source (e.g. FOPL +
+     salt targets on `packaged`) don't sum past 100% or double-count. Then collapse with shares.
+
+3. Feed the resulting fraction in as `salteff` to the EXISTING pathway (`saltmet = "percent"`).
+   Do not change `calculate_sodium_impact_etihad()` or `project.all()`.
+
+4. Because efficacy is now country-specific, scenarios can't carry a fixed scalar `salteff`.
+   Make each `scenario_configs` entry carry an intervention name (or a character vector of names
+   for a package). Edit `run_multiple_scenarios()` minimally so it resolves `salteff` PER COUNTRY
+   via `compute_total_efficacy()` before calling `project.all()`.
+
+   Scenarios to define:
+     baseline (salteff = 0), public_procurement, media_campaign, fopl, salt_targets, fiscal,
+     lss (placeholder), full_package (public + media + fopl + salt_targets + fiscal, composed per source).
+
+5. Update the parallel section:
+   - `clusterExport` varlist: DROP `default_sodium_policy_table`, `summarize_sodium_policy_package`;
+     ADD `source_shares`, `intervention_effects`, `compute_total_efficacy`.
+   - Output filenames: `model_output_interventions_<country>.rds`; logs `log_interventions_<country>.txt`.
+   - Log the per-country per-scenario `salteff` AND the source decomposition for traceability.
+
+6. Validation:
+   - Reuse `validate_intervention_results()`.
+   - Assert every country's source shares sum to 1.0 (tolerance 1e-6).
+   - Assert no intervention reduces `inherent`.
+   - Sanity check: for a 5%-public-share country, public_procurement salteff ≈ 0.20 × 0.05 = 1.0%
+     (matches the document's worked example).
+
+## Constraints
+- data.table / dplyr style consistent with 06.
+- Keep the exact output column schema from `project.all()` so downstream code stays compatible.
+- Comment each effect-size constant with its document source.
+- The script must run end-to-end for all countries in `data.in` (documented + default fallback).
