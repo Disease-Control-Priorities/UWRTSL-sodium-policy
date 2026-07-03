@@ -96,7 +96,7 @@ source("03_clean_inputs.R")
 # 04. define interventions ----
 #...........................................................
 
-source("04_define_interventions.R")
+source("04_define_intervention.R")
 
 #...........................................................
 # 05. build baseline ----
@@ -109,4 +109,5 @@ source("05_build_baseline.R")
 #...........................................................
 
 # Run Aim 1: multiple interventions
-source("06_run_scenarios_multiple.R")
+setwd(wd_code)
+source("06_run_scenarios_targets.R")

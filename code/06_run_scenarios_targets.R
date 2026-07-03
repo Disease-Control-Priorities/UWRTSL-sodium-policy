@@ -667,6 +667,11 @@ project.all <- function(
     intervention_rates[is.na(eff_ir_salt), `:=`(eff_ir = 1, eff_cf = 1)]
     intervention_rates[, c("eff_ir_salt", "eff_cf_salt", "IR_new", "CF_new") := NULL]
 
+    # NOTE: 'intervention' is a binary ARM flag only (Baseline vs any sodium
+    # reduction). It is intentionally NOT scenario-specific. The authoritative
+    # scenario identity is the 'scenario' column added by run_multiple_scenarios()
+    # via rbindlist(idcol = "scenario"). Downstream summaries must key off
+    # 'scenario', not 'intervention'.
     intervention_rates[, intervention := "Sodium reduction"]
   } else {
     intervention_rates[, intervention := "Baseline"]
@@ -902,23 +907,29 @@ for (nm in names(scenario_configs)) {
 }
 
 ###############################################################################
-# SECTION 11: Comparison and Validation Helpers  (unchanged)
+# SECTION 11: Comparison and Validation Helpers  (scenario-keyed)
 ###############################################################################
 
 #' Compare a scalar outcome across scenarios at selected years.
+#'
+#' The 'scenario' column (from run_multiple_scenarios) is the authoritative key.
+#' 'intervention' is a binary arm flag and is carried through for information
+#' only; it is deliberately NOT part of the reference join, since every non-
+#' baseline scenario shares the same intervention label ("Sodium reduction").
 compare_scenarios <- function(results_dt,
                               metric             = "dead",
                               years              = c(2030, 2040, 2050),
                               reference_scenario = "baseline") {
   comparison <- results_dt[year %in% years,
-                           .(total = sum(get(metric))),
-                           by = .(scenario, year, intervention)]
+                           .(total       = sum(get(metric)),
+                             intervention = first(intervention)),
+                           by = .(scenario, year)]
 
   if (reference_scenario %in% comparison$scenario) {
     ref_values <- comparison[scenario == reference_scenario,
-                             .(year, intervention, ref_total = total)]
+                             .(year, ref_total = total)]
     comparison <- merge(comparison, ref_values,
-                        by = c("year", "intervention"), all.x = TRUE)
+                        by = "year", all.x = TRUE)
     comparison[, `:=`(
       absolute_difference = total - ref_total,
       percent_change      = (total - ref_total) / ref_total * 100,
@@ -931,13 +942,17 @@ compare_scenarios <- function(results_dt,
 }
 
 #' Cumulative impact over a time window relative to baseline.
+#'
+#' Keyed on 'scenario' (authoritative). 'intervention' is carried as an
+#' informational label only.
 calculate_cumulative_impact <- function(results_dt,
                                         metric     = "dead",
                                         start_year = 2026,
                                         end_year   = 2050) {
   cumulative <- results_dt[year >= start_year & year <= end_year,
-                           .(cumulative_total = sum(get(metric))),
-                           by = .(scenario, intervention)]
+                           .(cumulative_total = sum(get(metric)),
+                             intervention     = first(intervention)),
+                           by = .(scenario)]
 
   baseline_val <- cumulative[scenario == "baseline", cumulative_total]
   cumulative[, diff_vs_baseline     := abs(cumulative_total - baseline_val)]

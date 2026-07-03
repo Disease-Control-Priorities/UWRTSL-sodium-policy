@@ -12,6 +12,10 @@ data/raw/**/*.*
 library/**/*.*
 !library/**/*.md
 
+# Ignore everything in output microdata except markdown
+output/out_model/**/*.*
+!output/out_model/**/*.md
+
 
 # Ignore RStudio project user files
 .Rproj.user
