@@ -16,6 +16,8 @@ library/**/*.*
 output/out_model/**/*.*
 !output/out_model/**/*.md
 
+# Ignore report files folder
+reports/report_files/
 
 # Ignore RStudio project user files
 .Rproj.user

@@ -1,0 +1,1336 @@
+---
+title: "Sodium Policy Intervention Model: Methods and Projected Health Impact (2017–2050)"
+date: "`r Sys.Date()`"
+author: "University of Washington · Resolve to Save Lives"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: hide
+    self_contained: true
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  error   = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.height = 5,
+  fig.width  = 9,
+  fig.align  = "center"
+)
+```
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(data.table)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(DT)
+library(scales)
+```
+
+```{r paths, message=FALSE, warning=FALSE, echo=FALSE}
+# Single source of truth for paths (mirrors the RTSL assessment report). The
+# project root is resolved relative to this .Rmd (scenarios/ is one level below
+# the repo root) so the report knits on any machine; a hard-coded fall-back is
+# used when the file is run chunk-by-chunk outside of knit.
+wd <- tryCatch({
+  root <- normalizePath(file.path(dirname(knitr::current_input(dir = TRUE)), ".."),
+                        winslash = "/", mustWork = TRUE)
+  paste0(root, "/")
+}, error = function(e)
+  "C:/Users/wrgar/OneDrive - UW/02Work/ResolveToSaveLives/SodiumPolicy/github/UWRTSL-sodium-policy/")
+
+wd_data <- paste0(wd, "data/processed/")
+wd_outp <- paste0(wd, "output/")
+wd_scen <- paste0(wd, "scenarios/")
+wd_raw  <- paste0(wd, "data/raw/")
+```
+
+```{r helpers, message=FALSE, warning=FALSE, echo=FALSE}
+# ---- Number formatters -------------------------------------------------------
+fmt_m <- function(x, digits = 2)     # millions
+  formatC(round(x / 1e6, digits), format = "f", digits = digits, big.mark = ",")
+fmt_k <- function(x, digits = 0)     # thousands
+  formatC(round(x / 1e3, digits), format = "f", digits = digits, big.mark = ",")
+fmt_pct <- function(x, digits = 1)
+  paste0(formatC(100 * x, format = "f", digits = digits), "%")
+
+# ---- Cause labels ------------------------------------------------------------
+cause_map <- c(
+  ihd     = "Ischemic heart disease",
+  istroke = "Ischemic stroke",
+  hstroke = "Intracerebral hemorrhage",
+  hhd     = "Hypertensive heart disease"
+)
+CAUSES <- names(cause_map)
+
+cause_cols <- c(
+  ihd     = "#56B4E9",
+  istroke = "#CC79A7",
+  hstroke = "#F0E442",
+  hhd     = "#E69F00"
+)
+
+# ---- Scenario metadata -------------------------------------------------------
+# The intervention model writes a 'scenario' column that is authoritative:
+#   baseline + one row per individual intervention + full_package.
+# (The 'intervention' column is only a binary arm flag - Baseline vs
+#  "Sodium reduction" - and must NOT be used to distinguish scenarios.)
+scenario_levels <- c("baseline", "public_procurement", "media_campaign", "fopl",
+                     "salt_targets", "fiscal", "lss", "full_package")
+
+scenario_labels <- c(
+  baseline           = "Baseline (no intervention)",
+  public_procurement = "Public food procurement & service",
+  media_campaign     = "Behaviour change / media campaigns",
+  fopl               = "Front-of-pack labelling (FOPL)",
+  salt_targets       = "Salt targets (reformulation)",
+  fiscal             = "Fiscal policy (salt tax)",
+  lss                = "Low-sodium salt substitutes (LSS)",
+  full_package       = "Full package"
+)
+
+# Short labels for compact axes / legends
+scenario_labels_short <- c(
+  baseline           = "Baseline",
+  public_procurement = "Public procurement",
+  media_campaign     = "Media campaign",
+  fopl               = "FOPL",
+  salt_targets       = "Salt targets",
+  fiscal             = "Fiscal",
+  lss                = "LSS",
+  full_package       = "Full package"
+)
+
+scenario_cols <- c(
+  baseline           = "#999999",
+  public_procurement = "#1f78b4",
+  media_campaign     = "#33a02c",
+  fopl               = "#ff7f00",
+  salt_targets       = "#e31a1c",
+  fiscal             = "#6a3d9a",
+  lss                = "#a6761d",
+  full_package       = "#000000"
+)
+
+# Non-baseline scenarios, in canonical order (individuals then package)
+scenario_nb <- setdiff(scenario_levels, "baseline")
+
+as_scn_factor <- function(x) factor(x, levels = scenario_levels)
+
+# ---- WHO standard population (ages 20-95+) for ASMR -------------------------
+full_who_std <- data.table(
+  age    = 0:100,
+  weight = c(
+    rep(0.013, 10), rep(0.014, 10), rep(0.013, 10), rep(0.012, 10),
+    rep(0.011, 10), rep(0.009, 10), rep(0.007, 10), rep(0.005, 10),
+    rep(0.003, 10), rep(0.001, 10), 0.001
+  )
+)
+who_std <- full_who_std[age >= 20 & age <= 94]
+who_std <- rbind(
+  who_std,
+  data.table(age = 95, weight = full_who_std[age >= 95, sum(weight)])
+)
+who_std[, weight := weight / sum(weight)]
+
+# Age-standardised rate per 100,000. deaths_col / population_col at single-year
+# age, weighted to the WHO world standard, then summed within (year, disagg_var).
+calculate_asmr <- function(dt, std_pop = who_std,
+                           deaths_col = "deaths_dx",
+                           population_col = "Nx",
+                           disagg_var = "scenario") {
+  dt <- copy(dt)
+  dt[, age := as.integer(gsub("\\+", "", as.character(age)))]
+  dt <- merge(dt, std_pop, by = "age", all.x = TRUE)
+  dt[, rate          := get(deaths_col) / get(population_col)]
+  dt[, weighted_rate := rate * weight]
+  group_vars <- c("year", disagg_var)
+  dt[, .(ASMR = sum(weighted_rate, na.rm = TRUE) * 1e5), by = group_vars]
+}
+
+# ---- Deaths-delayed calculator (keyed on 'scenario') -------------------------
+# deaths_delayed = baseline deaths - scenario deaths, over an optional set of
+# grouping columns and an optional year window. The reference is always the
+# 'baseline' scenario. Uses 'dead' (cause-specific, safe to sum over causes).
+deaths_delayed_by <- function(dt, by = character(0),
+                              years = NULL, ref = "baseline") {
+  d <- if (is.null(years)) dt else dt[year %in% years]
+  agg  <- d[, .(dead = sum(dead, na.rm = TRUE)), by = c("scenario", by)]
+  base <- agg[scenario == ref][, scenario := NULL]
+  setnames(base, "dead", "baseline_dead")
+  out  <- agg[scenario != ref]
+  if (length(by) > 0) {
+    out <- merge(out, base, by = by, all.x = TRUE)
+  } else {
+    out[, baseline_dead := base$baseline_dead]
+  }
+  out[, deaths_delayed := baseline_dead - dead]
+  out[]
+}
+```
+
+```{r source-logic, message=FALSE, warning=FALSE, echo=FALSE}
+# Self-contained copy of the source-split efficacy logic from
+# code/07_run_interventions.R (Section 3). Reproduced here verbatim so this
+# report can display the source-share, effect-size and salteff tables WITHOUT
+# depending on run-time globals - it stands alone on the .rds outputs.
+
+SODIUM_SOURCES     <- c("discretionary", "packaged", "restaurant", "public", "inherent")
+TARGETABLE_SOURCES <- setdiff(SODIUM_SOURCES, "inherent")
+
+# Effect-size constants (relative reduction applied to the target source).
+# Source: RTSL sodium policy document intervention effect-size tables.
+EFF_PROCUREMENT_PUBLIC   <- 0.20   # Public food procurement & service -> 'public'
+EFF_MEDIA                <- 0.010  # Media campaigns -> 'discretionary' + 'packaged'
+EFF_FOPL_PACKAGED        <- 0.138  # Front-of-pack labelling -> 'packaged'
+EFF_SALTTARGETS_PACKAGED <- 0.20   # Salt targets (reformulation) -> 'packaged'
+EFF_FISCAL_PACKAGED      <- 0.10   # Fiscal policy (salt tax) -> 'packaged'
+EFF_LSS_DISCRETIONARY    <- 0.15   # Low-sodium salt substitutes -> 'discretionary' (PLACEHOLDER)
+
+intervention_effects <- data.table(
+  intervention = c("public_procurement",
+                   "media_campaign", "media_campaign",
+                   "fopl", "salt_targets", "fiscal", "lss"),
+  source = c("public",
+             "discretionary", "packaged",
+             "packaged", "packaged", "packaged", "discretionary"),
+  effect = c(EFF_PROCUREMENT_PUBLIC,
+             EFF_MEDIA, EFF_MEDIA,
+             EFF_FOPL_PACKAGED, EFF_SALTTARGETS_PACKAGED,
+             EFF_FISCAL_PACKAGED, EFF_LSS_DISCRETIONARY)
+)
+
+intervention_registry <- data.table(
+  intervention = c("public_procurement", "media_campaign", "fopl",
+                   "salt_targets", "fiscal", "lss"),
+  label        = c("Public food procurement & service",
+                   "Behaviour change / media campaigns",
+                   "Front-of-pack labelling (FOPL)",
+                   "Salt targets (reformulation)",
+                   "Fiscal policy (salt tax)",
+                   "Low-sodium salt substitutes (LSS)"),
+  placeholder  = c(FALSE, FALSE, FALSE, FALSE, FALSE, TRUE)
+)
+
+# Per-country sodium source-share table (+ 'default' row), renormalised to 1.0.
+build_sodium_source_shares <- function() {
+  shares_raw <- data.table(
+    location      = c("Viet Nam", "Philippines", "Bangladesh", "China",
+                      "Ethiopia", "India", "Malaysia", "Thailand"),
+    discretionary = c(0.109, 0.320, 0.738, 0.594, 0.783, 0.738, 0.320, 0.235),
+    packaged      = c(0.641, 0.430, 0.062, 0.173, 0.017, 0.062, 0.430, 0.141),
+    restaurant    = c(0.100, 0.100, 0.050, 0.083, 0.050, 0.050, 0.100, 0.473),
+    public        = c(0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050),
+    inherent      = c(0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100)
+  )
+  # Malaysia uses the Philippines source profile as a proxy (per document).
+  default_row <- shares_raw[, lapply(.SD, mean), .SDcols = SODIUM_SOURCES]
+  default_row[, location := "default"]
+  setcolorder(default_row, c("location", SODIUM_SOURCES))
+  shares <- rbind(shares_raw, default_row, use.names = TRUE)
+  rs <- rowSums(shares[, ..SODIUM_SOURCES])
+  shares[, (SODIUM_SOURCES) := lapply(.SD, function(x) x / rs), .SDcols = SODIUM_SOURCES]
+  shares[]
+}
+
+# Collapse a set of interventions to a single total-intake reduction fraction
+# (the 'salteff') for one country.
+compute_total_efficacy <- function(intervention_names, country,
+                                   source_shares, intervention_effects) {
+  sources <- SODIUM_SOURCES
+  srow <- source_shares[location == country]
+  if (nrow(srow) == 0L) srow <- source_shares[location == "default"]
+  if (nrow(srow) == 0L) stop("No source shares for '", country, "' and no default.")
+  shares_vec <- unlist(srow[1L, ..sources])
+
+  if (is.null(intervention_names) || length(intervention_names) == 0L) {
+    total <- 0
+    attr(total, "decomposition") <-
+      data.table(source = sources, share = shares_vec[sources],
+                 composed_effect = 0, contribution = 0)
+    return(total)
+  }
+  eff <- intervention_effects[intervention %in% intervention_names]
+  composed <- vapply(sources, function(s) {
+    e <- eff[source == s, effect]
+    if (length(e) == 0L) 0 else 1 - prod(1 - e)
+  }, numeric(1))
+  dec <- data.table(source = sources, share = shares_vec[sources],
+                    composed_effect = composed[sources],
+                    contribution = shares_vec[sources] * composed[sources])
+  total <- sum(dec$contribution)
+  attr(total, "decomposition") <- dec[]
+  total
+}
+
+source_shares <- build_sodium_source_shares()
+
+# The default full package (LSS placeholder excluded).
+package_interventions <- intervention_registry[placeholder == FALSE, intervention]
+
+# Map each scenario -> its intervention vector (baseline = none).
+scenario_interventions <- c(
+  setNames(as.list(intervention_registry$intervention),
+           intervention_registry$intervention),
+  list(baseline = character(0),
+       full_package = package_interventions)
+)
+```
+
+```{r country-metadata, message=FALSE, warning=FALSE, echo=FALSE}
+# Region lookup for optional regional breakdowns.
+countries_dt <- tryCatch(
+  fread(paste0(wd_data, "Country_groupings_extended.csv")),
+  error = function(e) data.table(iso3 = character(), location = character(),
+                                 region = character())
+)
+if (nrow(countries_dt)) {
+  countries_dt[location == "United States of America", location := "United States"]
+  countries_dt[location == "Vietnam",                  location := "Viet Nam"]
+}
+
+# Baseline mean sodium intake (2024) - used only to illustrate the salteff ->
+# grams -> SBP chain; the report does not otherwise depend on it.
+sodium_baseline <- tryCatch({
+  sp <- readRDS(paste0(wd_data, "sodium_policy_scenarios.rds"))
+  setDT(sp)
+  sp[year == 2024, .(location, sodium_current)]
+}, error = function(e) NULL)
+```
+
+```{r load-model-output, message=FALSE, warning=FALSE, echo=FALSE}
+# ---- Load the per-country intervention outputs ------------------------------
+# Written by code/07_run_interventions.R, one file per country:
+#   output/out_model/model_output_interventions_<Country>.rds
+# Each is a data.table with an authoritative 'scenario' column.
+out_model_path <- paste0(wd_outp, "out_model/")
+files <- list.files(path = out_model_path,
+                    pattern = "^model_output_interventions_.*\\.rds$",
+                    full.names = TRUE)
+
+if (length(files) == 0)
+  stop(paste0(
+    "No 'model_output_interventions_*.rds' files found in:\n  ", out_model_path,
+    "\n\nRun code/07_run_interventions.R first (it must be sourced after ",
+    "05_build_baseline.R) to generate the per-country intervention outputs."
+  ))
+
+data.out <- rbindlist(
+  lapply(files, function(f) { dt <- readRDS(f); setDT(dt); dt }),
+  use.names = TRUE, fill = TRUE
+)
+data.out <- data.out[!is.na(location) & !is.na(scenario)]
+
+# Keep only recognised scenarios and impose canonical ordering.
+data.out <- data.out[scenario %in% scenario_levels]
+data.out[, scenario := as_scn_factor(scenario)]
+
+# Restrict to the four modelled CVD causes.
+data.out <- data.out[cause %in% CAUSES]
+
+# Age groups for demographic breakdowns.
+data.out[, age_group := cut(age, breaks = c(20, 45, 65, 80, Inf),
+                            labels = c("20-44", "45-64", "65-79", "80+"),
+                            right = FALSE, include.lowest = TRUE)]
+
+# Region metadata (optional).
+if (nrow(countries_dt)) {
+  data.out <- merge(data.out, unique(countries_dt[, .(location, region)]),
+                    by = "location", all.x = TRUE)
+}
+if (!"region" %in% names(data.out)) data.out[, region := NA_character_]
+
+# ---- Key counts / dimensions ------------------------------------------------
+n_countries <- uniqueN(data.out$location)
+year_min    <- min(data.out$year, na.rm = TRUE)
+year_max    <- max(data.out$year, na.rm = TRUE)
+study_years <- paste0(year_min, "–", year_max)
+scenarios_present <- levels(droplevels(data.out$scenario))
+
+# Scale-up window (as configured in 07_run_interventions.R).
+SCALEUP_YEAR1 <- 2026
+SCALEUP_YEAR2 <- 2030
+
+# Impact-accounting window for the headline results.
+impact_y1 <- SCALEUP_YEAR1
+impact_y2 <- min(2050, year_max)
+impact_window <- paste0(impact_y1, "–", impact_y2)
+n_impact_years <- impact_y2 - impact_y1 + 1
+```
+
+---
+
+# Background
+
+This report documents the **source-split sodium-policy intervention model**
+implemented in [`code/07_run_interventions.R`](../code/07_run_interventions.R)
+and presents its baseline and projected outputs. The model estimates the
+cardiovascular health impact of reducing population sodium intake through a
+menu of policy interventions, projecting outcomes annually for
+**`r n_countries` countries** over `r study_years`.
+
+The central question is:
+
+> *How many cardiovascular deaths are delayed by each sodium-reduction policy
+> — and by a coordinated policy package — when each policy's documented effect
+> is applied only to the sodium sources it can actually reach?*
+
+The engine is a **discrete-time, multi-state (Well → Sick → Dead) cohort
+model** calibrated to GBD, run once per **scenario**:
+
+- a **baseline** (no intervention),
+- one scenario for each **individual** intervention, and
+- a combined **full package**.
+
+Four causes of cardiovascular death are modelled jointly: ischemic heart
+disease (`ihd`), ischemic stroke (`istroke`), intracerebral hemorrhage
+(`hstroke`), and hypertensive heart disease (`hhd`).
+
+The defining feature of this build is **upstream**: instead of applying a
+single blended reduction to a single sodium pool, baseline sodium is split into
+**five sources**, and each intervention's documented relative reduction is
+applied **only to the source(s) it can affect**. Those per-source reductions
+are then collapsed to a single total-intake reduction fraction (`salteff`) that
+feeds the unchanged epidemiological pathway (sodium → SBP → CVD incidence →
+state transitions). Everything from `salteff` onward is identical to the prior
+single-pool model.
+
+```{r headline-precompute, message=FALSE, warning=FALSE, echo=FALSE}
+# Headline numbers for the inline narrative below.
+dd_total <- deaths_delayed_by(data.out, by = character(0),
+                              years = impact_y1:impact_y2)
+dd_total[, scenario := as_scn_factor(as.character(scenario))]
+setorder(dd_total, scenario)
+get_dd <- function(scn) dd_total[as.character(scenario) == scn, deaths_delayed]
+pkg_total <- get_dd("full_package")
+```
+
+Across `r n_countries` countries and `r impact_window`, the **full package** is
+projected to delay approximately **`r fmt_m(pkg_total)` million**
+cardiovascular deaths relative to baseline. Individual interventions and the
+by-cause decomposition are given in the [results](#main-results-deaths-delayed).
+
+> **A note on terminology.** Because the intervention lowers disease
+> *incidence* while case fatality is held at its baseline value, the model
+> shifts deaths later in time rather than removing them from the life table
+> entirely. We therefore report **deaths delayed** (baseline deaths − scenario
+> deaths within the window) rather than "deaths averted".
+
+---
+
+# Model inputs
+
+The report reads only the per-country `.rds` outputs; the inputs below are those
+consumed *upstream* by `07_run_interventions.R` (via `05_build_baseline.R`) and
+are described here for provenance.
+
+| Input | File | Role |
+|---|---|---|
+| Baseline transition rates | `*adjusted*.rds` → `b_rates` | Age × sex × year × cause incidence (IR), case fatality (CF), background mortality (BG.mx, BG.mx.all), COVID excess (covid.mx), prevalence and population (Nx). |
+| BP distribution | `bp_data6.csv` → `data.in` | Mean/SD systolic BP by age × sex, raised-BP fraction, diabetes prevalence; the baseline sodium column `salt`. |
+| Baseline sodium intake | `sodium_policy_scenarios.rds` | 2024 mean sodium intake (`sodium_current`) merged in as `salt`. |
+| Sodium source shares | recomputed in-report (also `sodium_source_shares.rds`) | Five-source split of baseline sodium per country. |
+| GBD relative risks | `IHME_GBD_2019_RELATIVE_RISKS_*_HTN.xlsx` → `dt_gbd_rr` | Log-linear RR per 10 mmHg SBP, by age × cause; sets bin-specific baseline incidence. |
+| ETTEHAD relative risks | `ettehad_rr_bp_reduction_10mmHg.csv`, `ettehad_rr_bp_reduction_effects.xlsx` | RR per 10 mmHg SBP reduction by BP bin × cause; converts the SBP shift to an incidence change. |
+| Scale-up schedule | user controls in `07_run_interventions.R` | Linear scale-up from `r SCALEUP_YEAR1` to `r SCALEUP_YEAR2`. |
+
+---
+
+# Methods
+
+## Overall structure
+
+Let $t$ index calendar years and $a$ single-year ages (20–95). For each
+country, sex, cause and scenario, the model tracks three states — **Well**,
+**Sick** (prevalent disease) and **Dead** — and advances them one year at a
+time. Disease dynamics are governed by three age/sex/cause/year-specific rates
+carried in `b_rates`:
+
+- $IR$ — incidence rate (Well → Sick),
+- $CF$ — case fatality (Sick → Dead from the disease),
+- background mortality $\text{BG.mx}$ (applied to the well/at-risk population),
+  a disease-envelope term $\text{BG.mx.all}$, and a COVID excess term
+  $\text{covid.mx}$ for 2020–2021.
+
+**Initialisation.** At the seed year (2017) and at the entry age (20) the states
+are set from GBD prevalence and mortality:
+
+$$
+\text{sick} = N_x\,\text{PREV}_{t_0}, \qquad
+\text{dead} = N_x\,\text{DIS.mx}_{t_0}, \qquad
+\text{well} = N_x\bigl(1 - (\text{PREV}_{t_0} + \text{BG.mx})\bigr),
+$$
+
+with population $\text{pop} = N_x$ and $\text{all.mx} = N_x\,\text{DIS.mx}_{t_0}
++ N_x\,\text{BG.mx}$.
+
+**Annual recurrences.** Writing $x_{t-1}$ for last year's value of state $x$ in
+the cohort that ages into year $t$, the transitions implemented in
+`project.all()` are:
+
+$$
+\begin{aligned}
+\text{newcases}_t &= \text{well}_{t-1}\cdot IR \\[2pt]
+\text{sick}_t     &= \text{sick}_{t-1}\bigl(1 - (CF + \text{BG.mx} + \text{covid.mx})\bigr) + \text{well}_{t-1}\cdot IR \\[2pt]
+\text{dead}_t     &= \text{sick}_{t-1}\cdot CF \\[2pt]
+\text{pop}_t      &= \text{pop}_{t-1} - \text{all.mx}_{t-1} \\[2pt]
+\text{all.mx}_t   &= \sum_{\text{causes}} \text{dead}_t \;+\; \text{pop}_t\cdot \text{BG.mx.all} \;+\; \text{pop}_t\cdot \text{covid.mx} \\[2pt]
+\text{well}_t     &= \text{pop}_t - \text{all.mx}_t - \text{sick}_t
+\end{aligned}
+$$
+
+Every quantity is floored at zero, ages advance by one year per step, and the
+loop runs up to 41 annual steps (2017 → 2058). In the current build the baseline
+rate panel spans 2017–2050, so populated outputs cover **`r study_years`**.
+
+**Aggregation semantics (important).** The four causes are modelled as
+independent Well/Sick/Dead processes that *share* one population. In the
+outputs this means **`pop` and `all.mx` are identical across the four cause
+rows** (the shared population and its total mortality), while **`sick`,
+`well`, `dead` and `newcases` are cause-specific**. Consequently:
+
+- disease **counts** (deaths, incident cases, prevalent cases) are summed over
+  causes, but
+- the **population denominator** is taken from a *single* cause row (summing
+  `pop` over the four causes would quadruple-count it); equivalently,
+  $\text{well}_c + \text{sick}_c = \text{pop} - \text{all.mx}$ is the total
+  living population and is the same for every cause $c$.
+
+All rates in this report follow those rules.
+
+## Source of sodium
+
+Baseline sodium intake is partitioned into **five mutually exclusive sources**
+whose shares sum to 1.0 in every country:
+
+$$
+\text{discretionary} + \text{packaged} + \text{restaurant} + \text{public} + \text{inherent} = 1 .
+$$
+
+`inherent` sodium (naturally present in unprocessed foods) is **never targeted**
+by any intervention. Each policy acts only on the source(s) it can plausibly
+reach. Country source shares are taken from the RTSL sodium policy document; a
+`default` row (the simple mean of the eight documented countries) is used for
+any country without its own row, and **every row is renormalised to sum to
+exactly 1.0** (handling documented rounding, e.g. Thailand's shares sum to
+0.999). **Malaysia uses the Philippines source profile** as a proxy.
+
+```{r tbl-source-shares, message=FALSE, warning=FALSE, echo=FALSE}
+ss_disp <- copy(source_shares)
+setnames(ss_disp,
+         c("location", SODIUM_SOURCES),
+         c("Country", "Discretionary", "Packaged", "Restaurant", "Public", "Inherent"))
+num_cols <- c("Discretionary", "Packaged", "Restaurant", "Public", "Inherent")
+ss_disp[, (num_cols) := lapply(.SD, function(x) formatC(x, format = "f", digits = 3)),
+        .SDcols = num_cols]
+
+kable(ss_disp,
+      caption = paste0("Table M1. Per-country sodium source shares (fractions of ",
+                       "total intake), renormalised to 1.0. The 'default' row is the ",
+                       "mean across the eight documented countries and is used for all ",
+                       "other countries."),
+      align = c("l", rep("r", 5))) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 13) |>
+  row_spec(0, bold = TRUE) |>
+  row_spec(nrow(ss_disp), italic = TRUE) |>
+  footnote(general = paste0(
+    "Source: RTSL sodium policy document. 'inherent' sodium is never targeted. ",
+    "Malaysia uses the Philippines profile as a proxy."))
+```
+
+## Effect sizes
+
+Each intervention has a documented **relative reduction** applied to its target
+source at full implementation. Multiple policies may target the same source
+(notably `packaged`).
+
+```{r tbl-effect-sizes, message=FALSE, warning=FALSE, echo=FALSE}
+eff_disp <- merge(intervention_effects,
+                  intervention_registry[, .(intervention, label, placeholder)],
+                  by = "intervention", all.x = TRUE)
+eff_disp <- eff_disp[, .(
+  Intervention = label,
+  `Target source` = source,
+  `Relative reduction` = fmt_pct(effect, 1),
+  Note = fifelse(placeholder, "placeholder — excluded from package", "")
+)]
+# canonical order
+ord <- c("Public food procurement & service",
+         "Behaviour change / media campaigns",
+         "Behaviour change / media campaigns",
+         "Front-of-pack labelling (FOPL)",
+         "Salt targets (reformulation)",
+         "Fiscal policy (salt tax)",
+         "Low-sodium salt substitutes (LSS)")
+eff_disp[, Intervention := factor(Intervention, levels = unique(ord))]
+setorder(eff_disp, Intervention, `Target source`)
+
+kable(eff_disp,
+      caption = "Table M2. Intervention → source effect sizes (relative reduction of the target source at full implementation).",
+      align = c("l", "l", "r", "l")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 13) |>
+  row_spec(0, bold = TRUE) |>
+  footnote(general = paste0(
+    "Media campaigns act on both discretionary and packaged sodium (1.0% each). ",
+    "FOPL, salt targets and fiscal policy all act on packaged sodium and are ",
+    "composed multiplicatively when combined. Source: RTSL sodium policy ",
+    "effect-size tables."))
+```
+
+## Composition math
+
+For a **package** of interventions, effects on the *same* source are composed
+so that overlapping policies never double-count or exceed 100%. For source $s$
+with intervention effects $\text{eff}_{i,s}$:
+
+$$
+\text{composed}_s \;=\; 1 - \prod_{i}\bigl(1 - \text{eff}_{i,s}\bigr).
+$$
+
+The composed per-source effects are then **share-weighted** and summed to give
+the single total-intake reduction fraction — exactly the `salteff` the
+downstream pathway expects:
+
+$$
+\boxed{\;\text{salteff} \;=\; \sum_{s}\, \text{share}_s \cdot \text{composed}_s\;}
+$$
+
+**Worked sanity check (asserted in code).** For public procurement in Viet Nam,
+only the `public` source is affected (share 0.05, effect 20%), so
+$\text{salteff} = 0.20 \times 0.05 = 0.01$.
+
+```{r sanity-check, message=FALSE, warning=FALSE, echo=FALSE}
+chk <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam",
+                                         source_shares, intervention_effects))
+```
+
+The in-report recomputation returns
+$\text{salteff}_{\text{Viet Nam, public procurement}} =$
+**`r formatC(chk, format = "f", digits = 4)`**, matching $0.20 \times 0.05$.
+
+## From `salteff` to health impact
+
+Given a country's `salteff`, the intervention reduces sodium intake and — through
+blood pressure — CVD incidence. Case fatality is **not** modified.
+
+1. **Target reduction (grams).** With `salt` the baseline sodium column and the
+   `"percent"` method used here, the targeted reduction is
+   $\text{salt\_target} = \text{salt}\cdot\text{salteff}$, subject to a
+   **2 g/day minimum-intake floor**: if $\text{salt} - \text{salt\_target} < 2$
+   then $\text{salt\_target} = \text{salt} - 2$.
+
+2. **Linear scale-up.** Between `saltyear1` = `r SCALEUP_YEAR1` and `saltyear2`
+   = `r SCALEUP_YEAR2` the reduction ramps linearly, then holds:
+   $$
+   \text{salt\_reduction}_t =
+   \begin{cases}
+   0 & t < \text{saltyear1}\\[4pt]
+   \text{salt\_target}\cdot\dfrac{t - \text{saltyear1} + 1}{\text{saltyear2}-\text{saltyear1}+1} & \text{saltyear1}\le t \le \text{saltyear2}\\[10pt]
+   \text{salt\_target} & t > \text{saltyear2}.
+   \end{cases}
+   $$
+
+3. **Sodium → SBP (Filippini dose–response).** The SBP reduction depends on
+   whether the individual has raised BP (fraction $\text{raisedBP}$):
+   $$
+   \Delta SBP = \bigl(2.8\cdot\text{raisedBP} + 1.0\cdot(1-\text{raisedBP})\bigr)\cdot \text{salt\_reduction}.
+   $$
+
+4. **Baseline bin-specific incidence (GBD).** Within each BP bin $b$, baseline
+   incidence is scaled by the GBD log-linear RR per 10 mmHg, normalised so the
+   population-average recovers the observed $IR$:
+   $$
+   IR_{\text{bin},b} = \frac{RR^{\text{GBD}}_{b}\cdot IR}{\alpha},
+   \qquad \alpha = \sum_b \text{prob}_b\, RR^{\text{GBD}}_{b},
+   $$
+   where $RR^{\text{GBD}}_b = \bigl(rr^{10}\bigr)^{(m_b-120)/10}$ for bin
+   midpoint $m_b>120$ (else 1) and $\text{prob}_b$ is the share of the age/sex
+   group in bin $b$ (from a normal BP distribution).
+
+5. **SBP → incidence (ETTEHAD).** The proportional reduction in bin-specific
+   incidence is driven by the ETTEHAD relative risk per 10 mmHg,
+   $RR^{10}_{b,c}$, for BP bin $b$ and cause $c$, applied in proportion to the
+   SBP reduction; incidence is then averaged over BP bins:
+   $$
+   IR^{\text{new}}_{c} = \sum_b \text{prob}_b\; IR_{\text{bin},b}\,
+   \Bigl(1 - \bigl(1 - RR^{10}_{b,c}\bigr)\cdot 0.1\cdot \Delta SBP\Bigr),
+   \qquad
+   \text{eff\_ir} = \frac{IR^{\text{new}}_c}{IR_c}.
+   $$
+   The factor $0.1$ converts $\Delta SBP$ (mmHg) into units of 10 mmHg. The
+   ETTEHAD inputs include diabetes-specific effect sizes that the pipeline
+   blends by local diabetes prevalence; the applied incidence modifier is the
+   per-10-mmHg RR above.
+
+6. **Case fatality unchanged.** $CF^{\text{new}} = CF$ and $\text{eff\_cf}=1$:
+   sodium reduction acts on incidence only. Before `saltyear1`,
+   $IR^{\text{new}} = IR$.
+
+The modified $IR$ then flows through the same state-transition recurrences given
+above.
+
+```{r flow-diagram, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=2.6}
+boxes <- data.table(
+  x = 1:6,
+  label = c("Source shares\n× effect sizes",
+            "salteff\nΣ share·composed",
+            "ΔSBP\n(Filippini)",
+            "ΔIncidence\n(ETTEHAD RR)",
+            "State transitions\nWell→Sick→Dead",
+            "Deaths\ndelayed")
+)
+arrows <- data.table(x = (1:5) + 0.42, xend = (2:6) - 0.42, y = 1, yend = 1)
+
+ggplot() +
+  geom_tile(data = boxes, aes(x = x, y = 1), width = 0.84, height = 0.7,
+            fill = "#e8eef4", color = "#1f78b4", linewidth = 0.6) +
+  geom_text(data = boxes, aes(x = x, y = 1, label = label), size = 3.1, lineheight = 0.95) +
+  geom_segment(data = arrows, aes(x = x, xend = xend, y = y, yend = yend),
+               arrow = arrow(length = unit(0.16, "cm"), type = "closed"),
+               linewidth = 0.5, color = "grey30") +
+  coord_cartesian(xlim = c(0.5, 6.5), ylim = c(0.55, 1.45)) +
+  labs(title = "Causal chain: sources → salteff → SBP → incidence → deaths delayed") +
+  theme_void(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 11))
+```
+
+## Scenarios
+
+The model's user controls (`selected_interventions = "all"`,
+`scenario_mode = "both"`) generate a **baseline**, one scenario per
+**individual** intervention, and a combined **`full_package`**. By default the
+package is `public_procurement + media_campaign + fopl + salt_targets + fiscal`
+— the LSS placeholder runs as its own scenario but is **excluded from the
+package** until its effect size is finalised.
+
+```{r tbl-scenarios, message=FALSE, warning=FALSE, echo=FALSE}
+scn_tbl <- data.table(
+  scenario = scenario_levels,
+  interventions = vapply(scenario_levels, function(s) {
+    iv <- scenario_interventions[[s]]
+    if (length(iv) == 0) "(none — baseline)" else paste(iv, collapse = " + ")
+  }, character(1))
+)
+scn_tbl[, Scenario := scenario_labels[scenario]]
+scn_tbl[, present := scenario %in% scenarios_present]
+scn_disp <- scn_tbl[, .(Scenario, `Interventions (source-split)` = interventions,
+                        `In outputs` = fifelse(present, "yes", "no"))]
+
+kable(scn_disp,
+      caption = "Table M3. Scenarios and their constituent interventions.",
+      align = c("l", "l", "c")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 13) |>
+  row_spec(0, bold = TRUE) |>
+  row_spec(which(scn_tbl$scenario %in% c("baseline", "full_package")), bold = TRUE)
+```
+
+The resulting `salteff` is **country-specific** because it depends on the local
+source shares. Table M4 illustrates this for a few representative countries
+(recomputed in-report from Tables M1–M2).
+
+```{r tbl-salteff, message=FALSE, warning=FALSE, echo=FALSE}
+ref_countries <- intersect(c("Viet Nam", "Bangladesh", "China", "Thailand", "default"),
+                           source_shares$location)
+salteff_grid <- rbindlist(lapply(scenario_nb, function(s) {
+  iv <- scenario_interventions[[s]]
+  vals <- vapply(ref_countries, function(cc)
+    as.numeric(compute_total_efficacy(iv, cc, source_shares, intervention_effects)),
+    numeric(1))
+  data.table(Scenario = scenario_labels[s], t(vals))
+}))
+setnames(salteff_grid, c("Scenario", ref_countries))
+num_cols <- ref_countries
+salteff_grid[, (num_cols) := lapply(.SD, function(x) formatC(x, format = "f", digits = 4)),
+             .SDcols = num_cols]
+
+kable(salteff_grid,
+      caption = paste0("Table M4. Illustrative salteff (fraction of TOTAL sodium ",
+                       "reduced at full implementation) by scenario and country."),
+      align = c("l", rep("r", length(ref_countries)))) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 13) |>
+  row_spec(0, bold = TRUE) |>
+  footnote(general = paste0(
+    "salteff is largest where the intervention's target source dominates local ",
+    "intake (e.g. FOPL/salt-targets/fiscal in packaged-heavy Viet Nam; LSS in ",
+    "discretionary-heavy Bangladesh/China)."))
+```
+
+---
+
+# Baseline (pre-intervention) time series
+
+The panels below use the **`baseline`** scenario only. Population denominators
+use the de-duplicated total population (a single cause row); counts sum
+cause-specific values over the four causes. Incidence begins in 2018 (2017 is
+the seed year, in which `newcases` = 0 by construction).
+
+```{r baseline-aggregates, message=FALSE, warning=FALSE, echo=FALSE}
+base <- data.out[scenario == "baseline"]
+
+# Total (de-duplicated) population per year: take one cause row.
+base_pop  <- base[cause == "ihd", .(pop = sum(pop, na.rm = TRUE)), by = year]
+
+# All-cause counts per year.
+base_all  <- base[, .(sick = sum(sick, na.rm = TRUE),
+                      newcases = sum(newcases, na.rm = TRUE),
+                      dead = sum(dead, na.rm = TRUE)), by = year]
+base_all  <- merge(base_all, base_pop, by = "year")
+base_all[, `:=`(prev_rate = sick / pop * 1000,
+                inc_rate  = newcases / pop * 1000,
+                mort_rate = dead / pop * 1e5)]
+
+# By-cause counts per year (denominator = total population, same for each cause).
+base_cause <- base[, .(sick = sum(sick, na.rm = TRUE),
+                       newcases = sum(newcases, na.rm = TRUE),
+                       dead = sum(dead, na.rm = TRUE)), by = .(cause, year)]
+base_cause <- merge(base_cause, base_pop, by = "year")
+base_cause[, `:=`(prev_rate = sick / pop * 1000,
+                  inc_rate  = newcases / pop * 1000,
+                  mort_rate = dead / pop * 1e5)]
+base_cause[, cause_lbl := factor(cause_map[cause], levels = unname(cause_map))]
+
+hist_cut <- 2024  # solid = historical, dashed = projected
+```
+
+## Prevalence over time
+
+```{r baseline-prevalence, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.5}
+p_all <- ggplot(base_all, aes(year, prev_rate, linetype = year > hist_cut)) +
+  geom_line(linewidth = 1.1, color = "#b2182b") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Prevalent CVD cases per 1,000 population — baseline (all causes)",
+       subtitle = paste0(n_countries, " countries; solid = historical, dashed = projected"),
+       x = "Year", y = "Prevalent cases per 1,000",
+       caption = "Sum of cause-specific prevalent cases / total population.") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
+print(p_all)
+
+p_cause <- ggplot(base_cause, aes(year, prev_rate, color = cause_lbl,
+                                  linetype = year > hist_cut)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = setNames(cause_cols, cause_map), name = "Cause") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  labs(title = "Prevalent CVD cases per 1,000 population — baseline, by cause",
+       x = "Year", y = "Prevalent cases per 1,000") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p_cause)
+```
+
+## Incidence over time
+
+```{r baseline-incidence, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.5}
+inc_all   <- base_all[year >= 2018]
+inc_cause <- base_cause[year >= 2018]
+
+p_all <- ggplot(inc_all, aes(year, inc_rate, linetype = year > hist_cut)) +
+  geom_line(linewidth = 1.1, color = "#2166ac") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Incident CVD cases per 1,000 population — baseline (all causes)",
+       subtitle = "New cases per 1,000 population per year; 2017 seed year omitted",
+       x = "Year", y = "Incident cases per 1,000",
+       caption = "Sum of cause-specific new cases / total population.") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
+print(p_all)
+
+p_cause <- ggplot(inc_cause, aes(year, inc_rate, color = cause_lbl,
+                                 linetype = year > hist_cut)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = setNames(cause_cols, cause_map), name = "Cause") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  labs(title = "Incident CVD cases per 1,000 population — baseline, by cause",
+       x = "Year", y = "Incident cases per 1,000") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p_cause)
+```
+
+## Mortality over time
+
+```{r baseline-mortality, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.5}
+p_all <- ggplot(base_all, aes(year, dead / 1e6, linetype = year > hist_cut)) +
+  geom_line(linewidth = 1.1, color = "#4d4d4d") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  scale_y_continuous(labels = comma) +
+  labs(title = "CVD deaths per year — baseline (all causes)",
+       subtitle = paste0(n_countries, " countries; millions of deaths per year"),
+       x = "Year", y = "Deaths per year (millions)",
+       caption = "Sum of cause-specific deaths.") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
+print(p_all)
+
+p_cause <- ggplot(base_cause, aes(year, dead / 1e6, color = cause_lbl,
+                                  linetype = year > hist_cut)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = setNames(cause_cols, cause_map), name = "Cause") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  scale_y_continuous(labels = comma) +
+  labs(title = "CVD deaths per year — baseline, by cause",
+       x = "Year", y = "Deaths per year (millions)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p_cause)
+```
+
+## Age-standardised mortality rate (ASMR)
+
+```{r baseline-asmr, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=5}
+# All-cause ASMR: deaths summed over causes; Nx = de-duplicated population.
+asmr_all_in <- base[, .(deaths_dx = sum(dead, na.rm = TRUE)), by = .(age, year)]
+pop_ay      <- base[cause == "ihd", .(Nx = sum(pop, na.rm = TRUE)), by = .(age, year)]
+asmr_all_in <- merge(asmr_all_in, pop_ay, by = c("age", "year"))
+asmr_all_in[, grp := "All CVD"]
+asmr_all <- calculate_asmr(asmr_all_in, disagg_var = "grp")
+
+# By-cause ASMR: Nx = well+sick (per cause = total living population).
+asmr_c_in <- base[, .(deaths_dx = sum(dead, na.rm = TRUE),
+                      Nx = sum(well, na.rm = TRUE) + sum(sick, na.rm = TRUE)),
+                  by = .(cause, age, year)]
+asmr_cause <- calculate_asmr(asmr_c_in, disagg_var = "cause")
+asmr_cause[, cause_lbl := factor(cause_map[cause], levels = unname(cause_map))]
+
+p <- ggplot() +
+  geom_line(data = asmr_cause, aes(year, ASMR, color = cause_lbl,
+                                   linetype = year > hist_cut), linewidth = 1) +
+  geom_line(data = asmr_all, aes(year, ASMR, linetype = year > hist_cut),
+            color = "black", linewidth = 1.2) +
+  annotate("text", x = year_min + 1, y = max(asmr_all$ASMR),
+           label = "All CVD", hjust = 0, vjust = 1, fontface = "bold", size = 3.6) +
+  scale_color_manual(values = setNames(cause_cols, cause_map), name = "Cause") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"), guide = "none") +
+  labs(title = "Age-standardised CVD mortality rate — baseline",
+       subtitle = "Per 100,000, WHO world standard population (ages 20–95+)",
+       x = "Year", y = "ASMR per 100,000",
+       caption = "Black = all CVD; coloured = by cause. Solid = historical, dashed = projected.") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+```
+
+---
+
+# Projected time series (all scenarios)
+
+The same three metrics, now overlaying **every scenario** — baseline, each
+individual intervention, and the full package — across the projection horizon.
+Interventions begin scaling up in `r SCALEUP_YEAR1`, so scenarios coincide
+before then and fan out thereafter.
+
+```{r projection-aggregates, message=FALSE, warning=FALSE, echo=FALSE}
+# All-cause per scenario x year.
+proj_pop <- data.out[cause == "ihd", .(pop = sum(pop, na.rm = TRUE)),
+                     by = .(scenario, year)]
+proj_all <- data.out[, .(sick = sum(sick, na.rm = TRUE),
+                         newcases = sum(newcases, na.rm = TRUE),
+                         dead = sum(dead, na.rm = TRUE)),
+                     by = .(scenario, year)]
+proj_all <- merge(proj_all, proj_pop, by = c("scenario", "year"))
+proj_all[, `:=`(prev_rate = sick / pop * 1000,
+                inc_rate  = newcases / pop * 1000,
+                mort_rate = dead / pop * 1e5)]
+
+# By cause per scenario x year.
+proj_cause <- data.out[, .(sick = sum(sick, na.rm = TRUE),
+                           newcases = sum(newcases, na.rm = TRUE),
+                           dead = sum(dead, na.rm = TRUE)),
+                       by = .(scenario, cause, year)]
+proj_cause <- merge(proj_cause, proj_pop, by = c("scenario", "year"))
+proj_cause[, `:=`(prev_rate = sick / pop * 1000,
+                  inc_rate  = newcases / pop * 1000,
+                  mort_rate = dead / pop * 1e5)]
+proj_cause[, cause_lbl := factor(cause_map[cause], levels = unname(cause_map))]
+
+scn_scale <- function(name = NULL)
+  list(
+    scale_color_manual(values = scenario_cols, labels = scenario_labels_short,
+                       breaks = scenario_levels, name = name),
+    guides(color = guide_legend(nrow = 2, byrow = TRUE))
+  )
+```
+
+## Prevalence
+
+```{r proj-prevalence, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.8}
+p <- ggplot(proj_all[year >= 2020], aes(year, prev_rate, color = scenario)) +
+  geom_line(linewidth = 1) +
+  scn_scale() +
+  labs(title = "Prevalent CVD cases per 1,000 population — all scenarios",
+       subtitle = "All causes combined", x = "Year", y = "Prevalent cases per 1,000") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+
+p <- ggplot(proj_cause[year >= 2020], aes(year, prev_rate, color = scenario)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ cause_lbl, scales = "free_y") +
+  scn_scale() +
+  labs(title = "Prevalent CVD cases per 1,000 population — by cause",
+       x = "Year", y = "Prevalent cases per 1,000") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+```
+
+## Incidence
+
+```{r proj-incidence, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.8}
+p <- ggplot(proj_all[year >= 2020], aes(year, inc_rate, color = scenario)) +
+  geom_line(linewidth = 1) +
+  scn_scale() +
+  labs(title = "Incident CVD cases per 1,000 population — all scenarios",
+       subtitle = "All causes combined", x = "Year", y = "Incident cases per 1,000") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+
+p <- ggplot(proj_cause[year >= 2020], aes(year, inc_rate, color = scenario)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ cause_lbl, scales = "free_y") +
+  scn_scale() +
+  labs(title = "Incident CVD cases per 1,000 population — by cause",
+       x = "Year", y = "Incident cases per 1,000") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+```
+
+## Mortality
+
+```{r proj-mortality, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.8}
+p <- ggplot(proj_all[year >= 2020], aes(year, dead / 1e6, color = scenario)) +
+  geom_line(linewidth = 1) +
+  scn_scale() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "CVD deaths per year — all scenarios",
+       subtitle = "All causes combined (millions per year)",
+       x = "Year", y = "Deaths per year (millions)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+
+p <- ggplot(proj_cause[year >= 2020], aes(year, dead / 1e6, color = scenario)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ cause_lbl, scales = "free_y") +
+  scn_scale() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "CVD deaths per year — by cause",
+       x = "Year", y = "Deaths per year (millions)") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+```
+
+---
+
+# Main results: deaths delayed {#main-results-deaths-delayed}
+
+The headline outcome is **deaths delayed** relative to baseline, keyed on the
+authoritative `scenario` column:
+
+$$
+\text{deaths\_delayed}_{\text{scenario}} = \text{deaths}_{\text{baseline}} - \text{deaths}_{\text{scenario}} .
+$$
+
+Cumulative totals are summed over **`r impact_window`** (the scale-up starts in
+`r SCALEUP_YEAR1`, so earlier years contribute negligibly).
+
+```{r deaths-delayed-compute, message=FALSE, warning=FALSE, echo=FALSE}
+# Cumulative deaths delayed over the impact window, by scenario.
+dd_cum <- deaths_delayed_by(data.out, by = character(0), years = impact_y1:impact_y2)
+dd_cum[, scenario := as_scn_factor(as.character(scenario))]
+setorder(dd_cum, scenario)
+dd_cum[, `:=`(per_year = deaths_delayed / n_impact_years,
+              pct_vs_base = deaths_delayed / baseline_dead)]
+
+# Annual + cumulative time series, by scenario (full horizon).
+dd_annual <- deaths_delayed_by(data.out, by = "year")
+dd_annual[, scenario := as_scn_factor(as.character(scenario))]
+setorder(dd_annual, scenario, year)
+dd_annual[, cum_delayed := cumsum(deaths_delayed), by = scenario]
+
+# Helper for inline numbers.
+ddc <- function(scn) dd_cum[as.character(scenario) == scn, deaths_delayed]
+```
+
+Over `r impact_window`, across `r n_countries` countries:
+
+- The **full package** delays **`r fmt_m(ddc("full_package"))` million** CVD
+  deaths (`r fmt_pct(dd_cum[scenario=="full_package", pct_vs_base])` of baseline
+  CVD deaths in the window; ~`r fmt_k(dd_cum[scenario=="full_package", per_year])`
+  thousand per year).
+- Among the packaged-food policies, **salt targets** contribute most
+  (`r fmt_m(ddc("salt_targets"))` million), followed by **FOPL**
+  (`r fmt_m(ddc("fopl"))` million) and **fiscal policy**
+  (`r fmt_m(ddc("fiscal"))` million).
+- **Public procurement** (`r fmt_m(ddc("public_procurement"))` million) and
+  **media campaigns** (`r fmt_m(ddc("media_campaign"))` million) are smaller.
+- The **LSS placeholder** delays `r fmt_m(ddc("lss"))` million deaths — large
+  because it targets *discretionary* salt, which dominates intake in the most
+  populous countries; it is excluded from the package pending a confirmed
+  effect size and should be read with caution.
+
+## Table 1 — Cumulative deaths delayed by scenario
+
+```{r table1, message=FALSE, warning=FALSE, echo=FALSE}
+tab1 <- dd_cum[as.character(scenario) != "baseline"]
+tab1[, Scenario := scenario_labels[as.character(scenario)]]
+tab1[, is_pkg := as.character(scenario) == "full_package"]
+setorder(tab1, scenario)
+
+tab1_fmt <- tab1[, .(
+  Scenario,
+  `Interventions` = vapply(as.character(scenario), function(s) {
+    iv <- scenario_interventions[[s]]; paste(iv, collapse = " + ")
+  }, character(1)),
+  `Deaths delayed (millions)` = fmt_m(deaths_delayed, 3),
+  `Avg per year (thousands)`  = fmt_k(per_year, 1),
+  `% of baseline`             = fmt_pct(pct_vs_base, 2)
+)]
+
+kable(tab1_fmt,
+      caption = paste0("Table 1. Cumulative deaths delayed by scenario, ",
+                       impact_window, ", across ", n_countries, " countries."),
+      align = c("l", "l", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 13) |>
+  row_spec(0, bold = TRUE) |>
+  row_spec(which(tab1$is_pkg), bold = TRUE, background = "#eef2f7") |>
+  footnote(general = paste0(
+    "Deaths delayed = baseline deaths - scenario deaths, summed over ",
+    impact_window, ". '% of baseline' is relative to baseline CVD deaths in ",
+    "the same window. LSS is a placeholder (excluded from the full package)."))
+```
+
+```{r table1-dt, message=FALSE, warning=FALSE, echo=FALSE}
+dt_show <- tab1[, .(
+  Scenario,
+  `Deaths delayed`   = round(deaths_delayed),
+  `Avg per year`     = round(per_year),
+  `% of baseline`    = round(100 * pct_vs_base, 2)
+)]
+datatable(dt_show, rownames = FALSE,
+          caption = "Interactive version of Table 1 (absolute counts).",
+          options = list(pageLength = 8, dom = "t")) |>
+  formatCurrency(c("Deaths delayed", "Avg per year"), currency = "", digits = 0)
+```
+
+## Figure 1 — Cumulative deaths delayed by scenario
+
+```{r figure1-bar, message=FALSE, warning=FALSE, echo=FALSE, fig.width=9, fig.height=5}
+fig1 <- dd_cum[as.character(scenario) != "baseline"]
+fig1[, scn_lbl := factor(scenario_labels_short[as.character(scenario)],
+                         levels = rev(scenario_labels_short[scenario_nb]))]
+
+p <- ggplot(fig1, aes(deaths_delayed / 1e6, scn_lbl, fill = scenario)) +
+  geom_col(width = 0.68) +
+  geom_text(aes(label = fmt_m(deaths_delayed, 2)), hjust = -0.1, size = 3.4) +
+  scale_fill_manual(values = scenario_cols, guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.12)), labels = comma) +
+  labs(title = paste0("Cumulative deaths delayed by scenario, ", impact_window),
+       subtitle = paste0(n_countries, " countries; all CVD causes combined"),
+       x = "Deaths delayed (millions)", y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+print(p)
+```
+
+## Figure 2 — Annual deaths delayed over time
+
+```{r figure2-annual, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=5}
+p <- ggplot(dd_annual[as.character(scenario) != "baseline" & year >= 2024],
+            aes(year, deaths_delayed / 1e3, color = scenario)) +
+  geom_line(linewidth = 1) +
+  scn_scale() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Annual deaths delayed by scenario",
+       subtitle = "Thousands of CVD deaths delayed per year vs. baseline",
+       x = "Year", y = "Deaths delayed per year (thousands)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+```
+
+## Figure 3 — Cumulative deaths delayed over time
+
+```{r figure3-cumulative, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=5}
+p <- ggplot(dd_annual[as.character(scenario) != "baseline"],
+            aes(year, cum_delayed / 1e6, color = scenario)) +
+  geom_line(linewidth = 1.1) +
+  scn_scale() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Cumulative deaths delayed by scenario",
+       subtitle = "Millions of CVD deaths delayed vs. baseline (running total)",
+       x = "Year", y = "Cumulative deaths delayed (millions)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+print(p)
+```
+
+## Figure 4 & Table 2 — Full package, by cause
+
+```{r figure4-cause, message=FALSE, warning=FALSE, echo=FALSE, fig.width=9, fig.height=5}
+dd_cause <- deaths_delayed_by(data.out, by = "cause", years = impact_y1:impact_y2)
+dd_cause <- dd_cause[as.character(scenario) == "full_package"]
+dd_cause[, cause_lbl := factor(cause_map[cause], levels = unname(cause_map))]
+setorder(dd_cause, -deaths_delayed)
+
+p <- ggplot(dd_cause, aes(deaths_delayed / 1e6,
+                          reorder(cause_lbl, deaths_delayed), fill = cause)) +
+  geom_col(width = 0.68) +
+  geom_text(aes(label = fmt_m(deaths_delayed, 2)), hjust = -0.1, size = 3.4) +
+  scale_fill_manual(values = cause_cols, guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.12)), labels = comma) +
+  labs(title = paste0("Full package: deaths delayed by cause, ", impact_window),
+       x = "Deaths delayed (millions)", y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+print(p)
+```
+
+```{r table2-cause, message=FALSE, warning=FALSE, echo=FALSE}
+# Deaths delayed by scenario x cause (wide), impact window.
+dd_sc <- deaths_delayed_by(data.out, by = "cause", years = impact_y1:impact_y2)
+dd_sc[, scenario := as_scn_factor(as.character(scenario))]
+dd_sc[, cause_lbl := cause_map[cause]]
+wide <- dcast(dd_sc, scenario ~ cause_lbl, value.var = "deaths_delayed")
+wide <- wide[as.character(scenario) != "baseline"]
+setorder(wide, scenario)
+wide[, Scenario := scenario_labels[as.character(scenario)]]
+setcolorder(wide, c("Scenario", unname(cause_map)))
+wide[, scenario := NULL]
+for (cc in unname(cause_map))
+  wide[, (cc) := fmt_m(get(cc), 3)]
+
+kable(wide,
+      caption = paste0("Table 2. Deaths delayed (millions) by scenario and cause, ",
+                       impact_window, "."),
+      align = c("l", rep("r", length(cause_map)))) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 13) |>
+  add_header_above(setNames(c(1L, length(cause_map)),
+                            c(" ", "Deaths delayed, millions"))) |>
+  row_spec(0, bold = TRUE)
+```
+
+## Country-level breakdown (full package)
+
+```{r figure5-country, message=FALSE, warning=FALSE, echo=FALSE, fig.width=9, fig.height=6.5}
+dd_country <- deaths_delayed_by(data.out, by = "location", years = impact_y1:impact_y2)
+dd_country <- dd_country[as.character(scenario) == "full_package"]
+setorder(dd_country, -deaths_delayed)
+
+topn <- head(dd_country, 20)
+p <- ggplot(topn, aes(deaths_delayed / 1e6, reorder(location, deaths_delayed))) +
+  geom_col(fill = "#1f78b4", width = 0.72) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.10)), labels = comma) +
+  labs(title = "Full package: top 20 countries by deaths delayed",
+       subtitle = impact_window,
+       x = "Deaths delayed (millions)", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+print(p)
+```
+
+```{r table3-country-dt, message=FALSE, warning=FALSE, echo=FALSE}
+ctab <- dd_country[, .(
+  Country = location,
+  `Deaths delayed`  = round(deaths_delayed),
+  `% of baseline`   = round(100 * deaths_delayed / baseline_dead, 2)
+)]
+setorder(ctab, -`Deaths delayed`)
+datatable(ctab, rownames = FALSE,
+          caption = paste0("All ", n_countries,
+                           " countries: full-package deaths delayed, ",
+                           impact_window, " (searchable / sortable)."),
+          options = list(pageLength = 12, order = list(list(1, "desc")))) |>
+  formatCurrency("Deaths delayed", currency = "", digits = 0)
+```
+
+## Regional breakdown (full package)
+
+```{r figure6-region, message=FALSE, warning=FALSE, echo=FALSE, fig.width=10, fig.height=5}
+if (data.out[, any(!is.na(region))]) {
+  dd_region <- deaths_delayed_by(data.out[!is.na(region)], by = "region",
+                                 years = impact_y1:impact_y2)
+  dd_region <- dd_region[as.character(scenario) == "full_package"]
+  setorder(dd_region, -deaths_delayed)
+  p <- ggplot(dd_region, aes(deaths_delayed / 1e6, reorder(region, deaths_delayed))) +
+    geom_col(fill = "#6a3d9a", width = 0.7) +
+    geom_text(aes(label = fmt_m(deaths_delayed, 2)), hjust = -0.1, size = 3.2) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.14)), labels = comma) +
+    labs(title = "Full package: deaths delayed by region",
+         subtitle = impact_window, x = "Deaths delayed (millions)", y = NULL) +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+  print(p)
+} else {
+  cat("Region metadata unavailable (Country_groupings_extended.csv not found); ",
+      "regional breakdown skipped.\n")
+}
+```
+
+---
+
+# Limitations and interpretation
+
+- **Deaths delayed, not averted.** Case fatality is held at baseline, so the
+  intervention lowers incidence and shifts mortality later; cumulative totals
+  depend on the accounting window.
+- **Effect sizes are point estimates.** The per-source reductions (Table M2)
+  are deterministic; no probabilistic sensitivity analysis is run here. LSS in
+  particular is a **placeholder**.
+- **Source shares** are documented for eight countries; all others use the
+  `default` (mean) profile, so country contrasts outside those eight reflect
+  population and disease burden more than local sodium structure.
+- **Independent-cause structure.** The four causes share one population but are
+  modelled independently, so "all-cause" prevalence/incidence sum cause-specific
+  cases and may count comorbid individuals more than once.
+- **Diabetes weighting.** ETTEHAD diabetes-specific effect sizes are prepared in
+  the pipeline; the applied incidence modifier is the per-10-mmHg RR.
+
+---
+
+# Reproducibility
+
+```{r session-info, message=FALSE, warning=FALSE, echo=FALSE}
+cat("Report generated:", format(Sys.time()), "\n")
+cat("Model outputs:    ", length(files), "country files from\n                  ",
+    out_model_path, "\n")
+cat("Countries:        ", n_countries, "\n")
+cat("Scenarios:        ", paste(scenarios_present, collapse = ", "), "\n")
+cat("Year range:       ", study_years, "\n\n")
+sessionInfo()
+```

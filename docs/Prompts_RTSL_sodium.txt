@@ -161,3 +161,69 @@ commented as a placeholder to be finalized later. LSS must run end-to-end with t
 - Keep the exact output column schema from `project.all()` so downstream code stays compatible.
 - Comment each effect-size constant with its document source.
 - The script must run end-to-end for all countries in `data.in` (documented + default fallback).
+
+#########################################
+#########################################
+
+# Task for Claude Code: build `scenarios/report.RMD` for the sodium-policy intervention model
+
+## Goal
+Create a new **`scenarios/report.RMD`** that knits to a self-contained **HTML** report (methods + results) for the sodium-policy intervention model. It should read the per-country `.rds` outputs produced by **`code/07_run_interventions.R`** and document, both **conceptually and mathematically**, what that model does, then present baseline and projected time series and the headline deaths-delayed results.
+
+Use the existing **`report.RMD`** in this repo (the RTSL HTN/TFA assessment report) as the **structural and stylistic template**: same YAML header (flatly theme, floating TOC, `code_folding: hide`, numbered sections), same `data.table`/`ggplot2`/`knitr`/`kableExtra`/`DT`/`scales` toolchain, same helper-function + narrative + figure/table rhythm. Match its look and conventions; only the model, scenarios, and mechanism narrative change.
+
+## Before you write anything — review the dependencies
+Read and understand these first, and let them drive the methods section (do not invent mechanism details — derive them from the code):
+
+1. **`code/07_run_interventions.R`** in full. Trace the pipeline end to end:
+   - Source-split logic (Section 3): `SODIUM_SOURCES`, `intervention_effects`, `build_sodium_source_shares()`, `compute_total_efficacy()`, `build_scenario_configs()`.
+   - The unchanged epidemiological core it depends on (Sections 1–2 GBD/ETTEHAD relative risks, Section 4 helpers, Section 6 `calculate_sodium_impact_etihad()`, Section 8 `project.all()`, Section 9 `run_multiple_scenarios()`, Section 11 validation).
+   - Section 12 parallel execution: it writes one file per country to `output/out_model/model_output_interventions_<Country>.rds`, each a `data.table` with a `scenario` column and columns `age, cause, sex, year, well, sick, newcases, dead, pop, all.mx, intervention, location, eff_ir, eff_cf`.
+2. The prerequisite globals it assumes (from `05_build_baseline.R`): `data.in`, `b_rates`, `inc`, `repYear`, and path vars `wd_raw`, `wd_data`, `wd_outp`. The report only needs the `.rds` outputs, but read enough to describe inputs accurately (sodium source shares, `sodium_policy_scenarios.rds`, GBD/ETTEHAD RR files).
+3. The example `report.RMD` — reuse its `paths`, `helpers`, `country-metadata`, and `load-model-output` chunk patterns, adapting the loader to the intervention filenames and to the **`scenario`** column (do NOT collapse `scenario` into `intervention` the way the example does — here `scenario` is authoritative: `baseline`, the individual interventions, and `full_package`).
+
+## Methods section — describe the model conceptually AND mathematically
+Write this as proper report prose with LaTeX math (the template already renders `$...$`). Cover:
+
+- **Overall structure:** a discrete-time multi-state (Well → Sick → Dead) cohort model over 2017–2058, calibrated to GBD, projecting four CVD causes jointly: IHD (`ihd`), ischemic stroke (`istroke`), intracerebral hemorrhage (`hstroke`), hypertensive heart disease (`hhd`). Give the state-transition recurrences actually used in `project.all()` (new cases $= \text{well}_{t-1}\cdot IR$; $\text{sick}_t = \text{sick}_{t-1}(1-(CF+\text{BG.mx}+\text{covid.mx})) + \text{well}_{t-1}\cdot IR$; deaths $=\text{sick}_{t-1}\cdot CF$; population and all-cause mortality updates), aging by one year per step.
+
+- **Source of sodium — highlight this explicitly.** Explain the five-source split (`discretionary, packaged, restaurant, public, inherent`), that shares sum to 1 per country, that `inherent` is never targeted, and reproduce the per-country **source-share table** from `build_sodium_source_shares()` as a kable (Viet Nam, Philippines, Bangladesh, China, Ethiopia, India, Malaysia, Thailand, + the `default` mean row). Note Malaysia uses the Philippines profile and that rows are renormalised to 1.
+
+- **Effect sizes — highlight this explicitly.** Present the intervention→source **effect-size table** as a kable, using the constants in the code: public procurement→public 20%; media→discretionary+packaged 1.0%; FOPL→packaged 13.8%; salt targets→packaged 20%; fiscal→packaged 10%; LSS→discretionary 15% (placeholder, excluded from the package by default). State provenance (RTSL sodium policy effect-size tables).
+
+- **Composition math.** Give the two key equations verbatim in math:
+  - per-source composed effect for a package: $\text{composed}_s = 1 - \prod_i (1 - \text{eff}_{i,s})$
+  - total-intake reduction fraction (the `salteff`): $\text{salteff} = \sum_s \text{share}_s \cdot \text{composed}_s$
+  - Include the worked sanity-check example the code asserts: public procurement in Viet Nam $= 0.20 \times 0.05 = 0.01$.
+
+- **From salteff to health impact.** Describe: the Filippini dose–response converting sodium reduction to SBP reduction ($\Delta SBP = (2.8\cdot\text{raisedBP} + 1.0\cdot(1-\text{raisedBP}))\cdot \Delta\text{salt}$), the 2 g/day minimum-intake floor, the linear scale-up between `saltyear1=2026` and `saltyear2=2030`, the diabetes-weighted ETTEHAD per-10-mmHg relative risks applied to incidence ($IR_{\text{new}} = IR_{\text{bin}}(1 - \text{effect}\cdot 0.1\cdot\Delta SBP)$, population-weighted over BP bins), and that case fatality is held at baseline (no secondary CF effect). Mention GBD log-linear RR per 10 mmHg used for baseline bin-specific incidence.
+
+- **Scenarios.** Explain `scenario_mode` and that the report covers: `baseline`, each individual intervention, and `full_package` (default = public + media + fopl + salt_targets + fiscal, LSS excluded). Give a scenario→interventions table and a small illustrative per-country `salteff` table (compute it in-report via a local copy of `compute_total_efficacy`, or read it from the model logs — prefer recomputing so the report is standalone).
+
+Consider adding a small **flow diagram** (e.g. a `DiagrammeR`/`mermaid` chunk, or a simple ggplot) of: source shares × effect sizes → salteff → ΔSBP → ΔIR → state-transition → deaths. Only if it renders cleanly in HTML; otherwise skip.
+
+## Results section — required outputs
+Define labels/colours/order for the scenarios (baseline + individuals + full_package), mirroring the template's palette approach. Then produce:
+
+1. **Baseline / pre-intervention time series** (use the `baseline` scenario):
+   - Prevalence over time (`sick/pop`), all-cause (summed over causes) and by cause.
+   - Incidence over time (`newcases`, or `newcases/well` as a rate — state which), all-cause and by cause.
+   - Mortality over time (`dead`), all-cause and by cause. Include an age-standardised mortality rate (ASMR) version using the template's `calculate_asmr()` + WHO standard population helper.
+
+2. **Projection time series** — the same three metrics (prevalence, incidence, mortality), overlaying **all scenarios** (baseline vs each intervention vs full_package), all-cause and faceted by cause, across the projection horizon. Use `geom_line` line charts like the template's "Disease Trends" section.
+
+3. **Main results — deaths delayed by intervention and by the full package.** This is the headline. Adapt the template's deaths-delayed logic (baseline scenario as the reference; `deaths_delayed = baseline_deaths − scenario_deaths`) to key off **`scenario`**, not `rate_scenario`. Provide:
+   - **Table:** cumulative deaths delayed 2026–2050 for each individual intervention and for `full_package`, with per-year average and % vs baseline (a `kable`/`kableExtra` table like the template's Table 1, plus an interactive `DT::datatable` if useful).
+   - **Figures:** annual and cumulative deaths-delayed time-series by scenario; a bar chart of cumulative deaths delayed by scenario; and a by-cause breakdown for the full package. A country-level breakdown (stacked bar / ranked) is a nice-to-have if the data supports it.
+   - Inline narrative numbers (via `` `r ... ` ``) for the full-package total and each intervention's contribution.
+
+## Practical requirements
+- Put the file at `scenarios/report.RMD`. Keep paths in one `paths` chunk (reuse the template's `wd`, `wd_data`, `wd_outp`, `wd_scen`, `wd_raw`); the loader reads from `paste0(wd_outp, "out_model/")` matching `model_output_interventions_*.rds`.
+- Guard against missing files with an informative `stop()` (as the template does) telling the user to run `07_run_interventions.R` first.
+- Set `echo=FALSE`/`code_folding: hide`, `message=FALSE`, `warning=FALSE`; captions on every table and titles/subtitles/axis labels on every figure.
+- All figures via ggplot with `theme_minimal`, consistent scenario colours, thousands/millions formatting via `scales`.
+- The report must knit standalone from the `.rds` outputs alone (recompute any efficacy/share tables it displays rather than depending on run-time globals).
+- Don't modify `07_run_interventions.R`. If you need a helper it defines (e.g. `compute_total_efficacy`), copy a minimal self-contained version into a report chunk.
+- After writing, do a dry check that the Rmd parses (e.g. `Rscript -e 'rmarkdown::render(...)'` if the environment and outputs are available; otherwise at least `knitr::purl` / parse the chunks). Report any packages that need installing.
+
+Deliverable: `scenarios/report.RMD` plus a one-paragraph summary of the sections you created and any assumptions you made about column semantics (e.g. how you defined the incidence and prevalence rates).
