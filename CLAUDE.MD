@@ -1,231 +1,159 @@
 # CLAUDE.md
 
-This file provides structured guidance for Claude when working on the
-**Sodium Policy Impact & Economic Evaluation Platform** repository.
+Guidance for Claude when working on the **Sodium Policy Impact &
+Economic Evaluation Platform**.
 
-This repository implements a national-scale comparative risk assessment
-(CRA), life-table modeling system, economic evaluation framework, and
-interactive Shiny simulation platform to evaluate dietary sodium
-reduction policies.
+This repository estimates the national-scale health and economic impact
+of dietary sodium-reduction policies via a Comparative Risk Assessment
+(CRA), a state-transition (well/sick/dead) mortality model, policy
+costing, and an interactive Shiny simulator.
 
-------------------------------------------------------------------------
-
-# Project Summary
-
-The platform estimates the **health and economic impact of achieving a
-30% reduction in population sodium intake** through coordinated policy
-interventions.
-
-Core components:
-
--   Comparative Risk Assessment (CRA)
--   Sodium → SBP → Cardiovascular disease causal pathway modeling
--   Population Impact Fraction (PIF) estimation
--   Cause-deleted or multi-decrement life tables
--   Implementation costing (ingredients-based)
--   Economic valuation (healthcare savings, productivity, mortality
-    valuation)
--   Interactive Shiny simulation interface
-
-Primary outcomes:
-
--   Deaths averted
--   Cardiovascular mortality reductions
--   Implementation costs
--   Healthcare cost offsets
--   Productivity gains
--   Net Present Value (NPV)
--   Benefit--Cost Ratios (BCR)
+The causal pathway modeled is **Sodium → systolic blood pressure (SBP) →
+cardiovascular disease**, evaluated for four causes: ischemic heart
+disease (`ihd`), ischemic stroke (`istroke`), intracerebral/hemorrhagic
+stroke (`hstroke`), and hypertensive heart disease (`hhd`).
 
 ------------------------------------------------------------------------
 
-# Technical Skills Required
+# Repository Structure
 
-Claude should assume the following technical competencies are required.
+The actual layout differs from a conventional split into
+`models/`/`costing/`/`economic/` folders — **those do not exist**. All
+analysis code is in `code/`; the Shiny app is in `www/`.
 
-## 1. Advanced R Programming
+    code/         Numbered R pipeline (see below) — the core model
+    data/raw/     Source inputs (GBD, IHME RR xlsx). git-ignored except *.md
+    data/processed/  Committed model inputs (.rds/.csv) the pipeline consumes
+    data/interim/    Scratch space (currently empty)
+    www/          Shiny application (app.R) + its own CSV inputs
+    output/out_model/  Per-country model_output_sodium_<country>.rds + logs (git-ignored)
+    docs/         R Markdown reports, Beamer slides, math write-up, references.bib
+    reports/      report.RMD → report.html
+    library/      Literature PDFs (a *reference* library, NOT an R package library)
+    tests/        Placeholder only — no automated tests exist
 
--   Modular function development
--   Reproducible project structuring
--   Efficient memory management
--   Scenario-based simulation logic
--   Clean separation between modeling layers (CRA, life-table, costing,
-    economic)
-
-This is a modeling-first project. Avoid unnecessary abstraction or
-stylistic refactors unless requested.
-
-------------------------------------------------------------------------
-
-## 2. data.table (High Priority)
-
-The project relies on `data.table` for performance, especially when
-handling:
-
--   Age × sex × year × cause panels
--   Intake distributions
--   Mortality projections
--   Scenario comparisons
-
-Claude must:
-
--   Use in-place updates (`:=`)
--   Use grouped calculations via `by=`
--   Use keyed joins for merges
--   Avoid converting to data.frame unnecessarily
--   Validate row counts after joins
-
-Expected pattern:
-
-``` r
-dt[, pif := (RR_new - 1) / RR_new,
-   by = .(age, sex, cause, year)]
-```
-
-Multi-key join example:
-
-``` r
-setkey(dt_exposure, age, sex)
-setkey(dt_mortality, age, sex)
-dt_mortality[dt_exposure]
-```
-
-Efficiency is important because scenarios may be simulated across
-multiple years and sensitivity runs.
+Note: every subdirectory `README.md` is an identical boilerplate copy of
+the project overview and carries no directory-specific information —
+ignore them and rely on this file.
 
 ------------------------------------------------------------------------
 
-## 3. Comparative Risk Assessment (CRA)
+# The Pipeline (`code/`)
 
-Claude must understand:
+Run the whole model by sourcing `00_run_model.R`. It sets paths, loads
+libraries, defines control flags, and sources `01`–`05` followed by
+`06_run_scenarios_targets.R`.
 
--   Exposure distributions (mean, SD, percentiles)
--   Exposure--response functions
--   Relative risk transformations
--   Population Impact Fraction (PIF)
--   Counterfactual exposure shifts (e.g., 30% sodium reduction)
--   Joint mediation pathway (Sodium → SBP → CVD)
+- **`00_run_model.R`** — orchestrator. Sets hard-coded absolute Windows
+  paths (`wd`, `wd_raw`, `wd_data`, `wd_outp`), boolean control flags
+  (e.g. `run_adjustment_model`, `run_bgmx_trend`, `run_CF_trend`,
+  `run_CF_trend_80`), and the `cause_map` abbreviations. **Edit `wd` when
+  running on another machine.**
+- **`01_utils.R`** — helpers: `get.bp.prob()` (BP-control/normal-based
+  distribution shift), TFA mortality-reduction helper, `create_age_groups()`.
+- **`02_load_inputs.R`** — heavy data-prep that rebuilds the sodium, TFA,
+  statin, and BP-control scenario files. Reads local
+  `data/processed/{Sodium,TFAPolicy,Statins}/` and NCD-RisC/GBD raw
+  inputs that are **not committed**; it regenerates the committed
+  `sodium_policy_scenarios.rds` etc. Downstream runs rely on the already
+  committed processed files, so this script is not needed for a standard
+  model run.
+- **`03_clean_inputs.R`** — empty placeholder.
+- **`04_define_intervention.R`** — a self-contained gamma-distribution
+  sodium→BP→CVD state-transition implementation (`get_bp_prob_salt`,
+  `build_intervention_rates_sodium`, `run_state_transitions_sodium`,
+  `run_sodium_model`). Loaded into the environment but the active run
+  uses the ETIHAD-based path in `06`, not `run_sodium_model`.
+- **`05_build_baseline.R`** — assembles the baseline objects the model
+  runs on: `b_rates` (age × sex × year × cause transition rates: `IR`,
+  `CF`, `BG.mx`, `Nx`/`pop`, etc.) and `data.in` (BP distribution by
+  `bp_cat`). Applies COVID excess mortality, UNWPP-2024 populations, and
+  forecasted downward trends in background mortality and case-fatality
+  (gated by the `run_*` flags).
+- **`06_run_scenarios.R`** — earlier scenario runner, **kept for
+  reference only** (not sourced).
+- **`06_run_scenarios_targets.R`** — the **current active model**.
+  Sodium-only. Loads GBD and ETIHAD relative risks (per 10 mmHg SBP),
+  defines the sodium policy/cost tables, and runs
+  `calculate_sodium_impact_etihad` → `project.all` → state-transition
+  loop → `validate_intervention_results` via `run_multiple_scenarios`.
+  Parallelised over countries (`parallel`/`doParallel`/`foreach`, 6
+  cores), writing `output/out_model/model_output_sodium_<country>.rds`
+  and a per-country log.
+- **`07_run_interventions.R`** — a newer **source-split** refactor of
+  `06_targets`: splits baseline sodium into five sources (discretionary,
+  packaged, restaurant, public, inherent; shares sum to 1) and applies
+  each intervention's documented reduction only to the sources it
+  affects, composing multiple policies on one source without
+  double-counting. Produces the same `out_model` outputs and shares the
+  downstream pathway with `06`; the only change is how the scalar
+  `salteff` is derived. Run this **instead of** `06_targets` for the
+  source-split analysis — it is not sourced by `00_run_model.R`.
 
-Interventions modify exposure distributions, not mortality directly.
-
-------------------------------------------------------------------------
-
-## 4. Life-Table & Mortality Modeling
-
-Required knowledge:
-
--   Cause-deleted life tables
--   Multi-decrement life tables
--   Age-specific mortality rates (mx)
--   Survival probabilities
--   Years of Life Lost (YLL)
--   Aggregation across age groups
-
-The modeling structure typically aggregates:
-
-age × sex × year × cause
-
-Consistency across dimensions is critical.
-
-------------------------------------------------------------------------
-
-## 5. Economic Evaluation Skills
-
-Claude should understand:
-
--   Ingredients-based costing
--   Programmatic vs healthcare costs
--   Discounting
--   Net Present Value (NPV)
--   Benefit--Cost Ratio (BCR)
--   Productivity gains estimation
--   Monetized mortality valuation (e.g., VSL or VSLY frameworks)
-
-Economic modules must remain modular and separable from health impact
-modules.
-
-------------------------------------------------------------------------
-
-## 6. Sensitivity & Scenario Analysis
-
-Claude should support:
-
--   Alternative compliance assumptions
--   Alternative scale-up speeds
--   Alternative discount rates
--   Alternative valuation parameters
--   Deterministic and probabilistic sensitivity analysis
-
-Scenario logic must be parameterized, not hard-coded.
+Scenario framing: **Progress** (15% sodium reduction by 2030) and
+**Aspirational** (30% by 2030), with a scale-up window of ~2026–2030 and
+a projection horizon to 2040.
 
 ------------------------------------------------------------------------
 
-## 7. Shiny Application Awareness
+# Dependencies
 
-The `/app/` directory contains an interactive Shiny interface.
+No `renv`/`packrat` lockfile — packages are expected to be installed in
+the ambient R library. Loaded via `library()`:
 
-Claude must:
-
--   Keep model functions separate from UI logic
--   Avoid embedding heavy computations directly in UI components
--   Ensure reproducibility of results outside the Shiny app
--   Maintain stable input/output object structures
-
-------------------------------------------------------------------------
-
-# Repository Structure Awareness
-
-Core directories:
-
-/data/ Input datasets (intake, mortality, costs) /models/ CRA and
-life-table modules /costing/ Implementation costing functions /
-economic/ Valuation and BCR analysis / app/ Shiny application / output/
-Results and figures / docs/ Technical documentation
-
-Claude should modify only the relevant module when implementing changes.
+- **Model pipeline:** `data.table`, `dplyr`, `tidyr`, `ggplot2`,
+  `RColorBrewer`, `readxl`, `countrycode`, `stringr`, `parallel`,
+  `doParallel`, `foreach`, `gmodels`, `forecast`.
+- **Shiny app (`www/app.R`):** `shiny`, `shinydashboard`, `shinyWidgets`,
+  `shinyjs`, `shinycssloaders`, `DT`, `plotly`, `networkD3`,
+  `rhandsontable`, `htmlwidgets`, plus `data.table`/`dplyr`/`tidyr`/`ggplot2`.
 
 ------------------------------------------------------------------------
 
-# Coding Standards
+# Shiny App (`www/app.R`)
 
-Claude should:
-
-1.  Use data.table as the default data structure.
-2.  Avoid unnecessary copying of large objects.
-3.  Preserve dimensional integrity after joins.
-4.  Keep exposure modeling separate from economic modules.
-5.  Maintain transparent parameter definitions.
-6.  Avoid rewriting modeling architecture without explicit request.
-7.  Preserve reproducibility and modularity.
+A `shinydashboard` app with tabs: Baseline data, Sodium policies,
+Hypertension treatment, Cost inputs, Results. It reads its **own** CSV
+inputs from the `www/` working directory (e.g. `base_rates_app2.csv`,
+`bp_data.csv`, `baseline_out_app2.csv`, `currencies.csv`) — these are not
+committed. Keep model logic reproducible outside the app; the app is a
+presentation layer, not the source of truth for results.
 
 ------------------------------------------------------------------------
 
-# When Assisting With This Project
+# Conventions
 
-Claude should prioritize:
-
--   Correct epidemiologic reasoning
--   Transparent CRA implementation
--   Economically coherent valuation logic
--   Performance efficiency
--   Clean separation between health and economic layers
--   Reproducibility of scenario outputs
-
-Avoid over-engineering, unnecessary tidyverse refactors, or abstraction
-layers that reduce clarity of policy modeling logic.
+1. **`data.table` is the default.** Use in-place `:=`, `by=` grouping,
+   keyed joins; avoid gratuitous `data.frame`/tidyverse conversion.
+   Validate row counts after joins — dimensional integrity across
+   age × sex × year × cause is critical.
+2. **Cause abbreviations** are used throughout: `ihd`, `istroke`,
+   `hstroke`, `hhd` (plus `aod`, `all` where relevant). Map to GBD full
+   names only at output/labeling time.
+3. **Age handling:** GBD 5-year groups are expanded to single-year ages
+   20–95; `95` is the terminal group.
+4. **Paths are hard-coded absolute Windows paths** in `00_run_model.R`
+   (and some are embedded in `02`/`05`). This is a Windows-based project.
+5. Keep exposure/epidemiologic modeling separate from costing/economic
+   logic. Parameterize scenarios via the config/flag mechanisms already
+   present rather than hard-coding new constants inline.
+6. Do not rewrite the modeling architecture or introduce abstraction
+   layers without an explicit request — prioritize epidemiologic
+   correctness, transparent CRA logic, and computational efficiency.
 
 ------------------------------------------------------------------------
 
-# Summary
+# Running & Reproducing
 
-This repository implements a modular sodium policy simulation platform
-integrating CRA, life-table modeling, costing, and economic evaluation,
-supported by an interactive Shiny interface.
+- **Full model:** open the project (`uwrtsl-sodium-policy.Rproj`) and
+  source `code/00_run_model.R` after fixing `wd`. Outputs land in
+  `output/out_model/`.
+- **Source-split variant:** source `01`–`05`, then
+  `code/07_run_interventions.R`.
+- **App:** run `shiny::runApp("www")` (requires the app's CSV inputs).
+- **Reports/slides:** knit `docs/*.Rmd` (Beamer slides use
+  `beamer_preamble.tex` and cite `references.bib`); `reports/report.RMD`
+  renders `report.html`.
 
-Any assistance should reinforce:
-
--   Epidemiological correctness
--   data.table fluency
--   Economic evaluation rigor
--   Policy interpretability
--   Computational efficiency
+There is no build system or test suite; the deliverable is the R script
+pipeline plus the app and rendered documents.

@@ -227,3 +227,77 @@ Define labels/colours/order for the scenarios (baseline + individuals + full_pac
 - After writing, do a dry check that the Rmd parses (e.g. `Rscript -e 'rmarkdown::render(...)'` if the environment and outputs are available; otherwise at least `knitr::purl` / parse the chunks). Report any packages that need installing.
 
 Deliverable: `scenarios/report.RMD` plus a one-paragraph summary of the sections you created and any assumptions you made about column semantics (e.g. how you defined the incidence and prevalence rates).
+
+
+#####################################################################################################
+Update CLAUDE.md to reflect the current state of the repository. Review the codebase for changes since CLAUDE.md was last updated — new dependencies, scripts, 
+directory structure, build/test commands, architecture, and conventions — then revise CLAUDE.md so it accurately documents the project. 
+Remove anything outdated, add anything missing, and keep it concise.
+
+#####################################################################################################
+
+
+Task: Update reports/report.RMD to match the current LSS model in code/07_run_interventions.R, and add several figures. Modify ONLY report.RMD — do not touch any other file.
+Context (read code/07_run_interventions.R first to confirm): The LSS intervention is no longer a placeholder. In the script it is now an SSaSS-derived model (Neal et al., NEJM 2021;385:1067–77): a −350 mg/day ITT sodium reduction against a ~4.3 g/day baseline → ~0.15 relative reduction of discretionary sodium (EFF_LSS_DISCRETIONARY <- 0.15, sensitivity 0.12–0.18). LSS reach is restricted to the hypertensive/raised-BP subpopulation (SBP ≥ 140 bins) via the lss_only flag and the inline bin-zeroing in calculate_sodium_impact_etihad(). Crucially, include_placeholders_in_package <- TRUE, so LSS is now part of full_package, not a standalone placeholder. The script also now runs two additional countries, Cameroon and Nigeria, which now have data and should be plotted normally like the other countries.
+The report's Methods/limitations text and the intervention_registry/package_interventions logic still describe LSS as a placeholder excluded from the package. Reconcile the report to the script.
+Make these specific edits to report.RMD only:
+
+Methods — describe the new LSS model and its limitations. In the Methods section (near "Effect sizes"/"Scenarios"), add prose describing the LSS model as now implemented: SSaSS-derived 15% discretionary-source reduction, hypertensive-only reach, and its limitations — notably that this model has no potassium channel, so it omits the large K⁺-driven share of SSaSS's observed −3.34 mmHg SBP effect and is therefore a conservative lower bound; sensitivity range 0.12–0.18; sodium-arm only. Update the flow/wording so LSS reads as a full model component.
+Integrate LSS into the full package throughout the report — not as a placeholder or standalone. Update the in-report logic so package_interventions / intervention_registry$placeholder include LSS in full_package (set the LSS placeholder flag to FALSE, matching include_placeholders_in_package <- TRUE). Fix all downstream narrative that calls LSS a "placeholder excluded from the package" (the Scenarios section text, Table M2 "Note" column, the Limitations bullet at the end, and the results bullet describing LSS). Ensure figures/tables that split individual vs. package treat LSS consistently.
+Sources of sodium — add a per-country stacked barplot. In the "Source of sodium" section (after Table M1), add a stacked barplot of sodium source shares by country: countries on the x-axis, stacked fractions (discretionary/packaged/restaurant/public/inherent) summing to 1. Include all countries with shares data (including Nigeria and Cameroon, plotted normally).
+Add a stacked barplot of illustrative salteff by scenario and country. Near Table M4 (illustrative salteff), add a stacked barplot showing expected illustrative salteff (fraction of TOTAL sodium reduced at full implementation) by scenario and country, for all countries with shares data (including Nigeria and Cameroon, plotted normally).
+Section 5.2 (incidence per 1,000) — add an indexed time-series figure. In the incidence-per-1,000 subsection, add a time-series figure indexed so the intervention/base year = 100, illustrating the relative change over time (use the deaths-delayed-per-year series indexed to the base intervention year = 100 to show relative change per year).
+Below "6.3 Figure 2 — Annual deaths delayed over time" — add an indexed time-series plot. Directly after the existing Figure 2 chunk, add a time-series figure indexed to base intervention year = 100 showing the relative change in deaths delayed per year across scenarios.
+
+Requirements: keep the existing code style (data.table, ggplot2, scenario_cols/scenario_labels_short, theme_minimal, chunk options with echo=FALSE). Make sure the report still knits (guard against missing data). Edit report.RMD only.
+
+
+#####################################################################################################################
+# Slideck 2026-07-08
+
+Task: Refactor the sodium policy slide deck for a 40-minute technical team discussion
+Refactor docs/UWRTSL-sodium-policy.rmd into a slide deck for a 40-minute team technical discussion focused on the technical details of the modeling and preliminary results for the project's prioritized countries.
+Context files to read first:
+
+docs/Inbox_-_William_R_Garcia_-_Outlook--_summary_may_meeting.pdf — summary of the previous (May 28) meeting; use it to build the recap slide.
+reports/report.RMD — the structure to follow and the source of all computed elements.
+code/07_run_interventions.R — check this against the deck's per-intervention methods and update the deck if the methods have changed.
+docs/references.bib, docs/beamer_preamble.tex — references and preamble.
+
+Before writing, confirm the actual filenames on disk (the PDF filename in particular may differ slightly from what I've written above).
+Hard constraints:
+
+Modify only docs/UWRTSL-sodium-policy.rmd and reports/report.RMD. Do not edit any other file.
+Do not perform any calculations in docs/UWRTSL-sodium-policy.rmd. Every computed element (tables, figures, numbers) must be produced in reports/report.RMD and consumed by the deck. If a needed element doesn't yet exist in reports/report.RMD, add it there.
+Use docs/references.bib with biblatex citation style.
+Use docs/beamer_preamble.tex as the preamble.
+
+Deck structure (follow the flow of reports/report.RMD: background → model inputs → methods → baseline and projections → main results → limitations):
+
+Recap slide summarizing the previous presentation/discussion (from the May meeting email and the existing slides).
+Today's agenda.
+Background.
+Model inputs — including sodium source shares by country, and illustrative salt-effect (η) by intervention and for the full package.
+Methods.
+One detailed slide on the current version of the LSS model.
+Baseline and projections:
+
+One slide: projected time-series trajectories by scenario for incidence — per 1,000 population and indexed to base year.
+One slide: projected time-series trajectories by scenario for deaths — per 1,000 population and indexed to base year.
+
+
+Main results.
+Limitations.
+Closing discussion slide with next steps and pending decisions to open team discussion.
+
+Appendix: Keep the detailed per-intervention methods here, verified against code/07_run_interventions.R.
+Aim the level and pacing for a technical team audience over ~40 minutes.
+Acceptance criteria (verify all before reporting done):
+
+reports/report.RMD renders successfully via rmarkdown::render("reports/report.RMD") with no errors.
+docs/UWRTSL-sodium-policy.rmd compiles to PDF via rmarkdown::render("docs/UWRTSL-sodium-policy.rmd") with no errors, using the beamer preamble.
+docs/UWRTSL-sodium-policy.rmd contains no calculation chunks — all tables/figures/numbers are pulled from objects or outputs produced in reports/report.RMD.
+All required slides listed above are present and in the specified order; detailed per-intervention methods are in the appendix, not the main body.
+Citations resolve from docs/references.bib using biblatex (no unresolved [?] references in the compiled PDF).
+The salt-effect (η) values and per-intervention methods in the deck match the current logic in code/07_run_interventions.R.
+Only docs/UWRTSL-sodium-policy.rmd and reports/report.RMD were modified; report which files you changed and paste the final render logs.

@@ -8,7 +8,7 @@ output:
     latex_engine: xelatex
     keep_tex: false
     slide_level: 2
-    toc: false
+    toc: true
     citation_package: biblatex
 bibliography: references.bib
 biblio-style: authoryear
@@ -47,16 +47,11 @@ tbl  <- function(name) cat(deck$tex[[name]])       # emit pre-rendered LaTeX tab
 
 From the previous presentation and discussion:
 
-- **Modeling framework** --- multi-state CVD life-table (Well $\to$ Sick $\to$ Dead), simulated annually for ages 20--95, by age $\times$ sex $\times$ country, for four causes: IHD, ischemic stroke, hemorrhagic stroke, hypertensive heart disease.
-- **Outcome metrics** --- deaths and cases delayed, DALYs averted, plus a full benefit--cost analysis (NPV, BCR).
-- **Causal pathway** --- sodium $\to$ systolic BP (Filippini dose--response) $\to$ CVD incidence (Ettehad per-10-mmHg relative risks) $\to$ life-table transitions \autocite{Filippini2021,ettehad2016}.
-- **Interventions** --- six policy levers scored in the Sodium Lives Saved Calculator (public procurement, media, low-sodium salt substitutes, front-of-pack labelling, salt targets, fiscal).
-- **Deliverables** --- peer-reviewed paper, RTSL report, and interactive Shiny tool.
-
-\medskip
-\footnotesize Today we present the **current build** of the model and **preliminary results** for the prioritized countries.
-
-## Recap: what the May 28 discussion decided
+<!-- - **Modeling framework** --- multi-state CVD life-table (Well $\to$ Sick $\to$ Dead), simulated annually for ages 20--95, by age $\times$ sex $\times$ country, for four causes: IHD, ischemic stroke, hemorrhagic stroke, hypertensive heart disease. -->
+<!-- - **Outcome metrics** --- deaths and cases delayed, DALYs averted, plus a full benefit--cost analysis (NPV, BCR). -->
+<!-- - **Causal pathway** --- sodium $\to$ systolic BP (Filippini dose--response) $\to$ CVD incidence (Ettehad per-10-mmHg relative risks) $\to$ life-table transitions \autocite{Filippini2021,ettehad2016}. -->
+<!-- - **Interventions** --- six policy levers scored in the Sodium Lives Saved Calculator (public procurement, media, low-sodium salt substitutes, front-of-pack labelling, salt targets, fiscal). -->
+<!-- - **Deliverables** --- RTSL funders report (**Prioritized**), peer-reviewed paper, and interactive tool. -->
 
 \justifying
 \scriptsize
@@ -65,7 +60,7 @@ From the previous presentation and discussion:
 \begin{column}{0.52\textwidth}
 \textbf{Scope \& data}
 \begin{itemize}
-  \item Fixed to \textbf{`r N$n_countries` priority countries} (down from the broader $\sim$29 / PAHO list).
+  \item Fixed to (64) \textbf{`r N$n_countries` priority countries}.
   \item Sodium sources: \textbf{combined approach} --- use country data where available, else the Bhat/Marklund GDP regression \autocite{marklund2022sources}. Drivers extend beyond GDP (condiments/bouillon in Viet Nam, Nigeria).
   \item \textbf{Do \emph{not} map interventions to SHAKE} --- no longer how the revised SHAKE frames them.
 \end{itemize}
@@ -73,14 +68,17 @@ From the previous presentation and discussion:
 \begin{column}{0.48\textwidth}
 \textbf{Policies \& framing}
 \begin{itemize}
-  \item \textbf{Fiscal policy}: feasibility \& generalizability doubts; RTSL not interested in salt taxes.
-  \item \textbf{LSSS}: focus scenarios 2/4/5; include potassium.
+  \item \textbf{Fiscal policy}: feasibility \& generalizability doubts; RTSL interested in salt taxes??
+  \item \textbf{LSSS}: focus scenarios 4/5; include potassium.
   \item \textbf{Media}: revised to a UK basis; may be dropped.
   \item Goal is not only to \emph{maximize} lives saved (e.g.\ prevention framing for Ethiopia).
   \item Primary deliverable: \textbf{BP reinvestment proposal} (memo, tables + figures), \textbf{Sept 2026}.
 \end{itemize}
 \end{column}
 \end{columns}
+
+\medskip
+\footnotesize Today we present the **current build** of the model and **preliminary results** for the prioritized countries.
 
 ## Today's agenda
 
@@ -95,42 +93,42 @@ From the previous presentation and discussion:
   \item \textbf{Discussion} --- pending decisions (fiscal in/out, LSS scenarios, source-share strategy, harmonizing observation periods) and the timeline to the September reinvestment deliverable.
 \end{enumerate}
 
-<!-- ======================================================================
-     2. BACKGROUND
-     ====================================================================== -->
+<!-- <!-- ====================================================================== -->
+<!--      2. BACKGROUND -->
+<!--      ====================================================================== --> -->
 
-# Background
+<!-- # Background -->
 
-## Project objective and policy question
+<!-- ## Project objective and policy question -->
 
-\justifying
-\footnotesize
+<!-- \justifying -->
+<!-- \footnotesize -->
 
-- Estimate the **national-scale health and economic impact** of dietary sodium-reduction policies using a population CVD model.
-- Quantify **deaths and cases delayed** (IHD, ischemic stroke, hemorrhagic stroke, hypertensive heart disease) and **DALYs averted** over `r N$scaleup1`--`r N$horizon_end`, with a full **benefit--cost analysis**.
-- Focus on **RTSL partner countries** and on policies governments can realistically implement.
+<!-- - Estimate the **national-scale health and economic impact** of dietary sodium-reduction policies using a population CVD model. -->
+<!-- - Quantify **deaths and cases delayed** (IHD, ischemic stroke, hemorrhagic stroke, hypertensive heart disease) and **DALYs averted** over `r N$scaleup1`--`r N$horizon_end`, with a full **benefit--cost analysis**. -->
+<!-- - Focus on **RTSL partner countries** and on policies governments can realistically implement. -->
 
-\medskip
-\begin{block}{The question the model answers}
-\footnotesize
-How many cardiovascular deaths are \emph{delayed} by each sodium-reduction policy --- and by a coordinated \textbf{package} --- when each policy's documented effect is applied \textbf{only to the sodium sources it can actually reach}?
-\end{block}
+<!-- \medskip -->
+<!-- \begin{block}{The question the model answers} -->
+<!-- \footnotesize -->
+<!-- How many cardiovascular deaths are \emph{delayed} by each sodium-reduction policy --- and by a coordinated \textbf{package} --- when each policy's documented effect is applied \textbf{only to the sodium sources it can actually reach}? -->
+<!-- \end{block} -->
 
-## Causal pathway and scope
+<!-- ## Causal pathway and scope -->
 
-\justifying
-\footnotesize
+<!-- \justifying -->
+<!-- \footnotesize -->
 
-\textbf{Exposure $\to$ disease chain (unchanged):}
+<!-- \textbf{Exposure $\to$ disease chain (unchanged):} -->
 
-$$
-\text{Sodium} \;\longrightarrow\; \text{SBP} \;\longrightarrow\; \text{CVD incidence} \;\longrightarrow\; \text{Well}\to\text{Sick}\to\text{Dead}
-$$
+<!-- $$ -->
+<!-- \text{Sodium} \;\longrightarrow\; \text{SBP} \;\longrightarrow\; \text{CVD incidence} \;\longrightarrow\; \text{Well}\to\text{Sick}\to\text{Dead} -->
+<!-- $$ -->
 
-- **SBP response** to sodium from the Filippini dose--response meta-analysis \autocite{Filippini2021}.
-- **Incidence response** to SBP from the Ettehad per-10-mmHg relative risks \autocite{ettehad2016}, applied by BP bin and cause.
-- **Four causes** modelled jointly (IHD, ischemic stroke, hemorrhagic stroke, HHD); **case fatality is held at baseline**, so the model shifts deaths later --- we report **deaths delayed**, not "averted".
-- **Scope:** `r N$n_countries` prioritized countries; annual projection over **`r N$study_years`**; scale-up `r N$scaleup1`--`r N$scaleup2`.
+<!-- - **SBP response** to sodium from the Filippini dose--response meta-analysis \autocite{Filippini2021}. -->
+<!-- - **Incidence response** to SBP from the Ettehad per-10-mmHg relative risks \autocite{ettehad2016}, applied by BP bin and cause. -->
+<!-- - **Four causes** modelled jointly (IHD, ischemic stroke, hemorrhagic stroke, HHD); **case fatality is held at baseline**, so the model shifts deaths later --- we report **deaths delayed**, not "averted". -->
+<!-- - **Scope:** `r N$n_countries` prioritized countries; annual projection over **`r N$study_years`**; scale-up `r N$scaleup1`--`r N$scaleup2`. -->
 
 <!-- ======================================================================
      3. MODEL INPUTS
@@ -178,7 +176,9 @@ knitr::include_graphics(fig("source_shares"))
 \justifying
 \footnotesize
 
-Each intervention has a documented **relative reduction** applied to its **target source**. Values match `code/07_run_interventions.R` exactly.
+Each intervention has a documented **relative reduction** applied to its **target source**. 
+
+<!-- Values match `code/07_run_interventions.R` exactly. -->
 
 ```{r tbl-effect-sizes, results='asis'}
 tbl("effect_sizes")
@@ -236,40 +236,40 @@ knitr::include_graphics(fig("flow"))
 
 \scriptsize \textbf{Worked check (asserted in code):} public procurement in Viet Nam touches only the public source (share 0.05, effect `r N$eff_public`) $\Rightarrow \eta = 0.20\times0.05 =$ \textbf{`r N$vn_sanity`}.
 
-## From $\eta$ to health impact
+<!-- ## From $\eta$ to health impact -->
 
-\justifying
-\scriptsize
+<!-- \justifying -->
+<!-- \scriptsize -->
 
-Given a country's $\eta$, sodium falls and --- through blood pressure --- so does CVD **incidence** (case fatality is unchanged):
+<!-- Given a country's $\eta$, sodium falls and --- through blood pressure --- so does CVD **incidence** (case fatality is unchanged): -->
 
-1. **Target reduction:** $\text{salt\_target} = \text{salt}\cdot\eta$, subject to a **2 g/day minimum-intake floor**.
-2. **Linear scale-up** from `r N$scaleup1` to `r N$scaleup2`, then held.
-3. **Sodium $\to$ SBP (Filippini)** \autocite{Filippini2021}: $\;\Delta SBP = \bigl(2.8\cdot\text{raisedBP} + 1.0\cdot(1-\text{raisedBP})\bigr)\cdot \text{salt\_reduction}$.
-4. **Baseline bin-specific incidence** scaled by the GBD log-linear RR per 10 mmHg, normalised to recover the observed $IR$.
-5. **SBP $\to$ incidence (Ettehad)** \autocite{ettehad2016}: bin-specific RR per 10 mmHg drives the proportional incidence change; averaged over BP bins.
-6. **Case fatality unchanged** $\Rightarrow$ **deaths delayed**, not averted.
+<!-- 1. **Target reduction:** $\text{salt\_target} = \text{salt}\cdot\eta$, subject to a **2 g/day minimum-intake floor**. -->
+<!-- 2. **Linear scale-up** from `r N$scaleup1` to `r N$scaleup2`, then held. -->
+<!-- 3. **Sodium $\to$ SBP (Filippini)** \autocite{Filippini2021}: $\;\Delta SBP = \bigl(2.8\cdot\text{raisedBP} + 1.0\cdot(1-\text{raisedBP})\bigr)\cdot \text{salt\_reduction}$. -->
+<!-- 4. **Baseline bin-specific incidence** scaled by the GBD log-linear RR per 10 mmHg, normalised to recover the observed $IR$. -->
+<!-- 5. **SBP $\to$ incidence (Ettehad)** \autocite{ettehad2016}: bin-specific RR per 10 mmHg drives the proportional incidence change; averaged over BP bins. -->
+<!-- 6. **Case fatality unchanged** $\Rightarrow$ **deaths delayed**, not averted. -->
 
-## The Lives Saved model: state-transition engine
+<!-- ## The Lives Saved model: state-transition engine -->
 
-\justifying
-\scriptsize
+<!-- \justifying -->
+<!-- \scriptsize -->
 
-Each country/sex/cause/scenario tracks **Well / Sick / Dead**, advanced one year at a time (ages 20--95, `r N$study_years`). With last year's cohort values:
+<!-- Each country/sex/cause/scenario tracks **Well / Sick / Dead**, advanced one year at a time (ages 20--95, `r N$study_years`). With last year's cohort values: -->
 
-$$
-\begin{aligned}
-\text{newcases}_t &= \text{well}_{t-1}\cdot IR \\[1pt]
-\text{sick}_t     &= \text{sick}_{t-1}\bigl(1-(CF+\text{BG.mx}+\text{covid.mx})\bigr) + \text{well}_{t-1}\cdot IR \\[1pt]
-\text{dead}_t     &= \text{sick}_{t-1}\cdot CF \\[1pt]
-\text{pop}_t      &= \text{pop}_{t-1} - \text{all.mx}_{t-1}, \qquad
-\text{well}_t = \text{pop}_t - \text{all.mx}_t - \text{sick}_t
-\end{aligned}
-$$
+<!-- $$ -->
+<!-- \begin{aligned} -->
+<!-- \text{newcases}_t &= \text{well}_{t-1}\cdot IR \\[1pt] -->
+<!-- \text{sick}_t     &= \text{sick}_{t-1}\bigl(1-(CF+\text{BG.mx}+\text{covid.mx})\bigr) + \text{well}_{t-1}\cdot IR \\[1pt] -->
+<!-- \text{dead}_t     &= \text{sick}_{t-1}\cdot CF \\[1pt] -->
+<!-- \text{pop}_t      &= \text{pop}_{t-1} - \text{all.mx}_{t-1}, \qquad -->
+<!-- \text{well}_t = \text{pop}_t - \text{all.mx}_t - \text{sick}_t -->
+<!-- \end{aligned} -->
+<!-- $$ -->
 
-- Seeded (2017) from GBD prevalence and mortality; every quantity floored at zero.
-- The **only** intervention lever is $IR$: sodium reduction lowers incidence via steps 1--6; $CF$, background and COVID mortality are untouched.
-- **Aggregation:** the four causes share one population, so `pop`/`all.mx` are identical across cause rows (denominator taken from a single cause); `sick`/`well`/`dead`/`newcases` are cause-specific and summed over causes.
+<!-- - Seeded (2017) from GBD prevalence and mortality; every quantity floored at zero. -->
+<!-- - The **only** intervention lever is $IR$: sodium reduction lowers incidence via steps 1--6; $CF$, background and COVID mortality are untouched. -->
+<!-- - **Aggregation:** the four causes share one population, so `pop`/`all.mx` are identical across cause rows (denominator taken from a single cause); `sick`/`well`/`dead`/`newcases` are cause-specific and summed over causes. -->
 
 ## Low-sodium salt substitute (LSS) model --- current version
 
@@ -289,7 +289,7 @@ LSS is no longer a placeholder: it is derived from the **Salt Substitute and Str
 \end{itemize}
 \end{uncertaintyblock}
 
-\scriptsize Per the May call: include potassium in future work; focus on discretionary scenarios 2/4/5 \autocite{huang2026}.
+\scriptsize Per the May call: include potassium in future work; focus on discretionary scenarios 4/5 \autocite{huang2026}.
 
 <!-- ======================================================================
      5. BASELINE AND PROJECTIONS
@@ -347,8 +347,9 @@ knitr::include_graphics(fig("results_bar"))
 
 \vspace{-0.3em}
 \begin{exampleblock}{Headline}
-\footnotesize
-The **full package** delays **`r N$pkg_m` million** CVD deaths across `r N$n_countries` countries (`r N$pkg_pct` of baseline CVD deaths in the window; $\sim$`r N$pkg_per_year_k` thousand/year).
+\scriptsize
+The \textbf{full package} delays `r N$pkg_m` million CVD deaths across `r N$n_countries` countries.
+`r N$pkg_pct` of baseline CVD deaths in the window; $\sim$`r N$pkg_per_year_k` thousand/year.
 \end{exampleblock}
 
 ## Deaths delayed by scenario --- detail
@@ -400,7 +401,7 @@ knitr::include_graphics(fig("countries"))
   \item \textbf{Deaths delayed, not averted.} Case fatality is held at baseline, so the intervention lowers incidence and shifts mortality later; totals depend on the accounting window.
   \item \textbf{Point estimates only.} The per-source reductions are deterministic --- no probabilistic sensitivity analysis yet.
   \item \textbf{LSS is a conservative lower bound} --- sodium arm only, no potassium channel; hypertensive-only reach as an individual scenario.
-  \item \textbf{Fiscal policy currently excluded} (applied $\eta$ = `r N$eff_fiscal`), pending the team's decision.
+  \item \textbf{Fiscal policy currently excluded} pending the team's decision. (applied $\eta$ = `r N$eff_fiscal`) 
   \item \textbf{Provisional source shares.} Nigeria/Cameroon values are working estimates; several others rest on single-study or older survey data.
   \item \textbf{Heterogeneous observation periods.} Documented effects span 1--20 year windows and are not yet harmonized onto a common footing.
   \item \textbf{Independent-cause structure.} The four causes share one population but are modelled independently.
@@ -420,9 +421,9 @@ knitr::include_graphics(fig("countries"))
 \begin{alertblock}{Open items}
 \begin{enumerate}
   \item \textbf{Fiscal policy} --- in or out? Currently $\eta=$ `r N$eff_fiscal`. Feasibility and the generalizability of the Saxena estimate \autocite{saxena2025} were both questioned.
-  \item \textbf{LSS scenarios} --- confirm discretionary scenarios 2/4/5; add a potassium channel to capture the full SSaSS effect?
+  \item \textbf{LSS scenarios} --- confirm discretionary scenarios 4/5 (prevalent or treated??); add a potassium channel to capture the full SSaSS effect?
   \item \textbf{Observation-period harmonization} --- effects measured over 1--20 yr. Apply as end-state at full scale-up, linearly over the observed window, or via a country-tier heuristic?
-  \item \textbf{Source-of-sodium strategy} --- how hard to push for country-specific shares vs.\ the Bhat/Marklund GDP regression \autocite{marklund2022sources}? Flag condiment/bouillon-heavy countries.
+  \item \textbf{Source-of-sodium strategy} --- how hard to push for country-specific shares vs.\ the Bhat/Marklund GDP regression \autocite{marklund2022sources}?.
   \item \textbf{Policy framing} --- lives-saved maximization vs.\ a prevention/counterfactual framing (e.g.\ Ethiopia).
   \item \textbf{Media / behavior change} --- keep or drop?
 \end{enumerate}
@@ -441,7 +442,7 @@ knitr::include_graphics(fig("countries"))
 \medskip
 \begin{block}{Discussion}
 \footnotesize
-Where should we push hardest before the reinvestment deliverable --- data (source shares), the fiscal/LSS decisions, or the economic layer?
+Where should we push hardest before the reinvestment deliverable --- e.g data (source shares)?
 \end{block}
 
 <!-- ======================================================================

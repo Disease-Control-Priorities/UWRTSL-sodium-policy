@@ -192,8 +192,13 @@ EFF_PROCUREMENT_PUBLIC   <- 0.20   # Public food procurement & service -> 'publi
 EFF_MEDIA                <- 0.010  # Media campaigns -> 'discretionary' + 'packaged'
 EFF_FOPL_PACKAGED        <- 0.138  # Front-of-pack labelling -> 'packaged'
 EFF_SALTTARGETS_PACKAGED <- 0.20   # Salt targets (reformulation) -> 'packaged'
-EFF_FISCAL_PACKAGED      <- 0.10   # Fiscal policy (salt tax) -> 'packaged'
-EFF_LSS_DISCRETIONARY    <- 0.15   # Low-sodium salt substitutes -> 'discretionary' (PLACEHOLDER)
+EFF_FISCAL_PACKAGED      <- 0.0   # Fiscal policy (salt tax) -> 'packaged'
+EFF_LSS_DISCRETIONARY    <- 0.15   # Low-sodium salt substitutes -> 'discretionary'
+# SSaSS-derived (Neal et al., NEJM 2021;385:1067-77): a net -350 mg/day ITT
+# sodium reduction against a ~4.3 g/day baseline -> ~0.15 relative reduction of
+# discretionary sodium (sensitivity 0.12-0.18; sodium-arm only, no K+ channel).
+# LSS reach is restricted to the hypertensive/raised-BP subpopulation in the
+# model. It is now a full model component included in the package.
 
 intervention_effects <- data.table(
   intervention = c("public_procurement",
@@ -217,19 +222,32 @@ intervention_registry <- data.table(
                    "Salt targets (reformulation)",
                    "Fiscal policy (salt tax)",
                    "Low-sodium salt substitutes (LSS)"),
-  placeholder  = c(FALSE, FALSE, FALSE, FALSE, FALSE, TRUE)
+  # LSS is no longer a placeholder: it is an SSaSS-derived model component that
+  # is included in the full package (matches include_placeholders_in_package
+  # <- TRUE in code/07_run_interventions.R). No intervention is a placeholder.
+  placeholder  = c(FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
 )
 
 # Per-country sodium source-share table (+ 'default' row), renormalised to 1.0.
+# Mirrors build_sodium_source_shares() in code/07_run_interventions.R verbatim:
+# all TEN prioritised countries, including Nigeria and Cameroon (provisional
+# shares supplied by RTSL/Matti on 8 Jul 2026, bouillon + condiments counted as
+# packaged; Nigeria is used as a proxy for Cameroon).
 build_sodium_source_shares <- function() {
   shares_raw <- data.table(
     location      = c("Viet Nam", "Philippines", "Bangladesh", "China",
-                      "Ethiopia", "India", "Malaysia", "Thailand"),
-    discretionary = c(0.109, 0.320, 0.738, 0.594, 0.783, 0.738, 0.320, 0.235),
-    packaged      = c(0.641, 0.430, 0.062, 0.173, 0.017, 0.062, 0.430, 0.141),
-    restaurant    = c(0.100, 0.100, 0.050, 0.083, 0.050, 0.050, 0.100, 0.473),
-    public        = c(0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050),
-    inherent      = c(0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100)
+                      "Ethiopia", "India", "Malaysia", "Thailand",
+                      "Nigeria", "Cameroon"),
+    discretionary = c(0.109, 0.320, 0.738, 0.594, 0.783, 0.738, 0.320, 0.235,
+                      0.231, 0.231),
+    packaged      = c(0.641, 0.430, 0.062, 0.173, 0.017, 0.062, 0.430, 0.141,
+                      0.415, 0.415),
+    restaurant    = c(0.100, 0.100, 0.050, 0.083, 0.050, 0.050, 0.100, 0.473,
+                      0.205, 0.205),
+    public        = c(0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050,
+                      0.050, 0.050),
+    inherent      = c(0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100,
+                      0.100, 0.100)
   )
   # Malaysia uses the Philippines source profile as a proxy (per document).
   default_row <- shares_raw[, lapply(.SD, mean), .SDcols = SODIUM_SOURCES]
@@ -273,8 +291,32 @@ compute_total_efficacy <- function(intervention_names, country,
 
 source_shares <- build_sodium_source_shares()
 
-# The default full package (LSS placeholder excluded).
-package_interventions <- intervention_registry[placeholder == FALSE, intervention]
+# Colours / labels for the five sodium sources (used by the source-share and
+# salteff stacked barplots).
+source_cols <- c(
+  discretionary = "#4E79A7",
+  packaged      = "#F28E2B",
+  restaurant    = "#59A14F",
+  public        = "#E15759",
+  inherent      = "#B07AA1"
+)
+source_labels <- c(
+  discretionary = "Discretionary",
+  packaged      = "Packaged",
+  restaurant    = "Restaurant",
+  public        = "Public",
+  inherent      = "Inherent"
+)
+
+# The full package. code/07_run_interventions.R sets
+# include_placeholders_in_package <- TRUE, so LSS (no longer a placeholder) is
+# folded into the package alongside the other five interventions.
+include_placeholders_in_package <- TRUE
+package_interventions <- if (isTRUE(include_placeholders_in_package)) {
+  intervention_registry$intervention
+} else {
+  intervention_registry[placeholder == FALSE, intervention]
+}
 
 # Map each scenario -> its intervention vector (baseline = none).
 scenario_interventions <- c(
@@ -283,6 +325,20 @@ scenario_interventions <- c(
   list(baseline = character(0),
        full_package = package_interventions)
 )
+
+#' Resolve a country's five source shares to a named numeric vector, falling
+#' back to the 'default' row for any country without documented shares (all ten
+#' prioritised countries now have their own row). Keeps the barplots robust.
+resolve_source_shares <- function(countries,
+                                  shares = source_shares) {
+  rbindlist(lapply(countries, function(cc) {
+    srow <- shares[location == cc]
+    if (nrow(srow) == 0L) srow <- shares[location == "default"]
+    srow <- copy(srow[1L])
+    srow[, location := cc]
+    srow[]
+  }))
+}
 ```
 
 ```{r country-metadata, message=FALSE, warning=FALSE, echo=FALSE}
@@ -518,10 +574,13 @@ $$
 `inherent` sodium (naturally present in unprocessed foods) is **never targeted**
 by any intervention. Each policy acts only on the source(s) it can plausibly
 reach. Country source shares are taken from the RTSL sodium policy document; a
-`default` row (the simple mean of the eight documented countries) is used for
+`default` row (the simple mean of the ten documented countries) is used for
 any country without its own row, and **every row is renormalised to sum to
 exactly 1.0** (handling documented rounding, e.g. Thailand's shares sum to
-0.999). **Malaysia uses the Philippines source profile** as a proxy.
+0.999). **Malaysia uses the Philippines source profile** as a proxy, and
+**Nigeria/Cameroon** use the provisional shares supplied by RTSL/Matti (with
+bouillon and condiments counted as packaged; Nigeria is used as a proxy for
+Cameroon).
 
 ```{r tbl-source-shares, message=FALSE, warning=FALSE, echo=FALSE}
 ss_disp <- copy(source_shares)
@@ -535,7 +594,7 @@ ss_disp[, (num_cols) := lapply(.SD, function(x) formatC(x, format = "f", digits 
 kable(ss_disp,
       caption = paste0("Table M1. Per-country sodium source shares (fractions of ",
                        "total intake), renormalised to 1.0. The 'default' row is the ",
-                       "mean across the eight documented countries and is used for all ",
+                       "mean across the ten documented countries and is used for all ",
                        "other countries."),
       align = c("l", rep("r", 5))) |>
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
@@ -545,6 +604,42 @@ kable(ss_disp,
   footnote(general = paste0(
     "Source: RTSL sodium policy document. 'inherent' sodium is never targeted. ",
     "Malaysia uses the Philippines profile as a proxy."))
+```
+
+The same shares are shown below as a per-country stacked bar. Each bar sums to
+1.0. All ten prioritised countries now have documented shares (Nigeria and
+Cameroon on provisional RTSL/Matti values); any other country would resolve to
+the `default` (mean) profile.
+
+```{r fig-source-shares-bar, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=5}
+# Countries to display: those actually modelled (includes Nigeria & Cameroon),
+# with a fall-back to the documented list if outputs are unavailable.
+plot_countries <- sort(unique(as.character(data.out$location)))
+if (length(plot_countries) == 0)
+  plot_countries <- setdiff(source_shares$location, "default")
+
+shares_bar <- resolve_source_shares(plot_countries)
+shares_long <- melt(shares_bar,
+                    id.vars = "location",
+                    measure.vars = SODIUM_SOURCES,
+                    variable.name = "source", value.name = "share")
+shares_long[, source := factor(source, levels = SODIUM_SOURCES)]
+
+p <- ggplot(shares_long, aes(location, share, fill = source)) +
+  geom_col(width = 0.78, colour = "white", linewidth = 0.2) +
+  scale_fill_manual(values = source_cols, labels = source_labels,
+                    breaks = SODIUM_SOURCES, name = "Sodium source") +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.02))) +
+  labs(title = "Sodium source shares by country",
+       subtitle = "Fraction of total baseline sodium intake, by source (bars sum to 100%)",
+       x = NULL, y = "Share of total sodium intake",
+       caption = paste0("Documented shares for the ten prioritised countries ",
+                        "(Nigeria/Cameroon on provisional RTSL values).")) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 35, hjust = 1))
+print(p)
 ```
 
 ## Effect sizes
@@ -561,7 +656,9 @@ eff_disp <- eff_disp[, .(
   Intervention = label,
   `Target source` = source,
   `Relative reduction` = fmt_pct(effect, 1),
-  Note = fifelse(placeholder, "placeholder — excluded from package", "")
+  Note = fifelse(intervention == "lss",
+                 "SSaSS-derived; hypertensive reach; in package",
+                 "")
 )]
 # canonical order
 ord <- c("Public food procurement & service",
@@ -583,9 +680,41 @@ kable(eff_disp,
   footnote(general = paste0(
     "Media campaigns act on both discretionary and packaged sodium (1.0% each). ",
     "FOPL, salt targets and fiscal policy all act on packaged sodium and are ",
-    "composed multiplicatively when combined. Source: RTSL sodium policy ",
-    "effect-size tables."))
+    "composed multiplicatively when combined. LSS acts on discretionary sodium ",
+    "(SSaSS-derived, 15%) and is a full component of the package. Source: RTSL ",
+    "sodium policy effect-size tables; LSS from Neal et al., NEJM 2021."))
 ```
+
+## Low-sodium salt substitutes (LSS)
+
+LSS is no longer a placeholder: it is now a fully specified model component
+derived from the **Salt Substitute and Stroke Study** (SSaSS; Neal et al.,
+*NEJM* 2021;385:1067–77). In SSaSS, replacing regular salt with a 75% NaCl /
+25% KCl substitute delivered an intention-to-treat net reduction of about
+**−350 mg/day sodium** against a baseline intake of roughly **4.3 g/day**.
+Referred to the discretionary source that a salt substitute can actually reach
+(discretionary sodium ≈ 59% of intake in the SSaSS setting), this corresponds
+to a **≈ 15% relative reduction of discretionary sodium**
+(`EFF_LSS_DISCRETIONARY = 0.15`), which is exactly how LSS enters Table M2. A
+**sensitivity range of 0.12–0.18** brackets the point estimate.
+
+Two modelling choices make this a **deliberately conservative lower bound**:
+
+- **Hypertensive-only reach.** Following the SSaSS enrolment criteria
+  (prior stroke, or age ≥ 60 with raised blood pressure), the LSS reduction is
+  applied **only to the raised-BP subpopulation** (SBP ≥ 140 mmHg bins). In the
+  code this is the `lss_only` flag, which zeroes the reduction in
+  normotensive BP bins inside `calculate_sodium_impact_etihad()`. This
+  restriction is active when LSS is run as its **own** scenario; within the
+  **full package** LSS is not isolated, so its discretionary reduction is
+  composed with the other policies across all bins (see the caveat in the
+  code).
+- **No potassium channel.** This model represents the sodium arm only. SSaSS
+  also raised urinary potassium by ≈ 803 mg/day, and that potassium increase
+  contributed a large share of the trial's observed **−3.34 mmHg** systolic
+  effect. Because the model has **no K⁺ pathway**, it captures only the
+  sodium-mediated portion of the blood-pressure benefit and therefore
+  **understates** the true LSS effect.
 
 ## Composition math
 
@@ -708,10 +837,12 @@ ggplot() +
 
 The model's user controls (`selected_interventions = "all"`,
 `scenario_mode = "both"`) generate a **baseline**, one scenario per
-**individual** intervention, and a combined **`full_package`**. By default the
-package is `public_procurement + media_campaign + fopl + salt_targets + fiscal`
-— the LSS placeholder runs as its own scenario but is **excluded from the
-package** until its effect size is finalised.
+**individual** intervention, and a combined **`full_package`**. With
+`include_placeholders_in_package <- TRUE`, the package now comprises **all six
+interventions** — `public_procurement + media_campaign + fopl + salt_targets +
+fiscal + lss`. LSS is a full member of the package (its SSaSS-derived effect
+size is specified above); it also runs as its own individual scenario, where its
+reduction is restricted to the hypertensive subpopulation.
 
 ```{r tbl-scenarios, message=FALSE, warning=FALSE, echo=FALSE}
 scn_tbl <- data.table(
@@ -764,7 +895,74 @@ kable(salteff_grid,
   footnote(general = paste0(
     "salteff is largest where the intervention's target source dominates local ",
     "intake (e.g. FOPL/salt-targets/fiscal in packaged-heavy Viet Nam; LSS in ",
-    "discretionary-heavy Bangladesh/China)."))
+    "discretionary-heavy Bangladesh/China). The LSS column is the share-weighted ",
+    "discretionary reduction; run as its own scenario LSS reaches only the ",
+    "hypertensive subpopulation, so its realised sodium reduction is smaller ",
+    "than this illustrative value."))
+```
+
+The stacked bars below show the same illustrative `salteff` for **every
+modelled country** (all ten prioritised countries, each on its own documented
+source profile), one panel per scenario. Each bar's total height is the country's `salteff`
+(fraction of *total* sodium reduced at full implementation); the segments
+decompose it into the per-source contributions ($\text{share}_s \times
+\text{composed}_s$) that sum to that total.
+
+```{r fig-salteff-bar, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=7}
+# Per-(scenario, country) source decomposition of salteff, for all modelled
+# countries. Uses the same source colours as the source-share barplot.
+salteff_bar <- rbindlist(lapply(scenario_nb, function(s) {
+  iv <- scenario_interventions[[s]]
+  rbindlist(lapply(plot_countries, function(cc) {
+    te  <- compute_total_efficacy(iv, cc, source_shares, intervention_effects)
+    dec <- copy(attr(te, "decomposition"))
+    dec[, `:=`(scenario = s, location = cc)]
+    dec[]
+  }))
+}))
+salteff_bar[, source   := factor(source, levels = SODIUM_SOURCES)]
+salteff_bar[, scn_lbl  := factor(scenario_labels_short[scenario],
+                                 levels = scenario_labels_short[scenario_nb])]
+
+p <- ggplot(salteff_bar[scenario!="full_package",], aes(location, contribution, fill = source)) +
+  geom_col(width = 0.8, colour = "white", linewidth = 0.15) +
+  facet_wrap(~ scn_lbl, ncol = 2, scales = "free_y") +
+  scale_fill_manual(values = source_cols, labels = source_labels,
+                    breaks = SODIUM_SOURCES, name = "Sodium source") +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "Illustrative salteff by scenario and country",
+       subtitle = paste0("Fraction of TOTAL sodium reduced at full ",
+                         "implementation; stacked by source contribution"),
+       x = NULL, y = "salteff (fraction of total sodium reduced)",
+       caption = paste0("Bar height = country salteff; note free y-axes across ",
+                        "panels. LSS shown at its share-weighted value.")) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 40, hjust = 1, size = 8))
+print(p)
+```
+
+```{r fig-salteff-bar2, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=7}
+# Per-(scenario, country) source decomposition of salteff, for all modelled
+# countries. Uses the same source colours as the source-share barplot.
+p <- ggplot(salteff_bar[scenario=="full_package",], aes(location, contribution, fill = source)) +
+  geom_col(width = 0.8, colour = "white", linewidth = 0.15) +
+  facet_wrap(~ scn_lbl, ncol = 2, scales = "free_y") +
+  scale_fill_manual(values = source_cols, labels = source_labels,
+                    breaks = SODIUM_SOURCES, name = "Sodium source") +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "Illustrative salteff by scenario and country",
+       subtitle = paste0("Fraction of TOTAL sodium reduced at full ",
+                         "implementation; stacked by source contribution"),
+       x = NULL, y = "salteff (fraction of total sodium reduced)",
+       caption = paste0("Bar height = country salteff; note free y-axes across ",
+                        "panels. LSS shown at its share-weighted value.")) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 40, hjust = 1, size = 8))
+print(p)
 ```
 
 ---
@@ -1019,6 +1217,40 @@ p <- ggplot(proj_cause[year >= 2020], aes(year, inc_rate, color = scenario)) +
 print(p)
 ```
 
+To isolate the **relative** change each policy drives — stripping out the shared
+demographic trend — the figure below re-expresses all-cause incidence per 1,000
+as an **index** with the intervention/base year (`r SCALEUP_YEAR1`) set to 100
+for every scenario. Scenarios coincide at the base year and then fan out as the
+intervention scales up; lines below 100 indicate incidence falling faster than
+its base-year level.
+
+```{r proj-incidence-indexed, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.8}
+# Index each scenario's all-cause incidence rate to its base-year value = 100.
+base_idx_year <- SCALEUP_YEAR1
+inc_idx <- proj_all[year >= base_idx_year, .(scenario, year, inc_rate)]
+base_inc <- inc_idx[year == base_idx_year, .(scenario, base_val = inc_rate)]
+inc_idx  <- merge(inc_idx, base_inc, by = "scenario", all.x = TRUE)
+inc_idx  <- inc_idx[!is.na(base_val) & base_val > 0]
+inc_idx[, inc_index := inc_rate / base_val * 100]
+
+if (nrow(inc_idx) > 0) {
+  p <- ggplot(inc_idx, aes(year, inc_index, color = scenario)) +
+    geom_hline(yintercept = 100, linetype = "dashed", color = "grey60") +
+    geom_line(linewidth = 1) +
+    scn_scale() +
+    labs(title = "Incident CVD cases per 1,000 — indexed to base year",
+         subtitle = paste0("All causes; ", base_idx_year,
+                          " = 100 for every scenario (relative change over time)"),
+         x = "Year", y = paste0("Incidence index (", base_idx_year, " = 100)")) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank())
+  print(p)
+} else {
+  cat("Indexed incidence series unavailable (no base-year data).\n")
+}
+```
+
 ## Mortality
 
 ```{r proj-mortality, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=4.8}
@@ -1091,10 +1323,12 @@ Over `r impact_window`, across `r n_countries` countries:
   (`r fmt_m(ddc("fiscal"))` million).
 - **Public procurement** (`r fmt_m(ddc("public_procurement"))` million) and
   **media campaigns** (`r fmt_m(ddc("media_campaign"))` million) are smaller.
-- The **LSS placeholder** delays `r fmt_m(ddc("lss"))` million deaths — large
-  because it targets *discretionary* salt, which dominates intake in the most
-  populous countries; it is excluded from the package pending a confirmed
-  effect size and should be read with caution.
+- **LSS** (SSaSS-derived) delays `r fmt_m(ddc("lss"))` million deaths as its own
+  scenario, where its reduction reaches only the hypertensive subpopulation.
+  It targets *discretionary* salt, which dominates intake in the most populous
+  countries. LSS is now a full component of the **full package** above; because
+  the model has no potassium channel, this is a **conservative lower bound** on
+  its true effect.
 
 ## Table 1 — Cumulative deaths delayed by scenario
 
@@ -1125,7 +1359,8 @@ kable(tab1_fmt,
   footnote(general = paste0(
     "Deaths delayed = baseline deaths - scenario deaths, summed over ",
     impact_window, ". '% of baseline' is relative to baseline CVD deaths in ",
-    "the same window. LSS is a placeholder (excluded from the full package)."))
+    "the same window. LSS (SSaSS-derived) is included in the full package; as ",
+    "an individual scenario it reaches only the hypertensive subpopulation."))
 ```
 
 ```{r table1-dt, message=FALSE, warning=FALSE, echo=FALSE}
@@ -1177,6 +1412,49 @@ p <- ggplot(dd_annual[as.character(scenario) != "baseline" & year >= 2024],
   theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
         panel.grid.minor = element_blank())
 print(p)
+```
+
+The absolute magnitudes above are dominated by the largest scenarios. Indexing
+each scenario's annual deaths-delayed series to a common base year = 100 removes
+that scale difference and exposes the **relative change per year** — how quickly
+each scenario's annual benefit grows once the intervention takes hold. The base
+year is the first post-scale-up year in which every scenario has a non-zero
+annual benefit (deaths delayed in the very first scale-up year are ≈ 0 because
+mortality responds to the prior year's incidence).
+
+```{r figure2b-annual-indexed, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=5}
+# Index annual deaths delayed to a base intervention year = 100, per scenario.
+dd_nb <- dd_annual[as.character(scenario) != "baseline"]
+n_scn <- uniqueN(as.character(dd_nb$scenario))
+
+# Base year: earliest year >= scale-up start where ALL scenarios are non-zero.
+ok_years <- dd_nb[year >= SCALEUP_YEAR1 & deaths_delayed > 0, .N,
+                  by = year][N == n_scn, year]
+base_dd_year <- if (length(ok_years) > 0) min(ok_years) else
+  suppressWarnings(min(dd_nb[deaths_delayed > 0, year]))
+
+if (is.finite(base_dd_year)) {
+  base_dd <- dd_nb[year == base_dd_year, .(scenario, base_val = deaths_delayed)]
+  dd_idx  <- merge(dd_nb[year >= base_dd_year], base_dd, by = "scenario", all.x = TRUE)
+  dd_idx  <- dd_idx[!is.na(base_val) & base_val > 0]
+  dd_idx[, dd_index := deaths_delayed / base_val * 100]
+
+  p <- ggplot(dd_idx, aes(year, dd_index, color = scenario)) +
+    geom_hline(yintercept = 100, linetype = "dashed", color = "grey60") +
+    geom_line(linewidth = 1) +
+    scn_scale() +
+    scale_y_continuous(labels = comma) +
+    labs(title = "Annual deaths delayed — indexed to base intervention year",
+         subtitle = paste0(base_dd_year,
+                          " = 100 for every scenario (relative change per year)"),
+         x = "Year", y = paste0("Deaths-delayed index (", base_dd_year, " = 100)")) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank())
+  print(p)
+} else {
+  cat("Indexed deaths-delayed series unavailable (no non-zero base year).\n")
+}
 ```
 
 ## Figure 3 — Cumulative deaths delayed over time
@@ -1310,11 +1588,18 @@ if (data.out[, any(!is.na(region))]) {
   intervention lowers incidence and shifts mortality later; cumulative totals
   depend on the accounting window.
 - **Effect sizes are point estimates.** The per-source reductions (Table M2)
-  are deterministic; no probabilistic sensitivity analysis is run here. LSS in
-  particular is a **placeholder**.
-- **Source shares** are documented for eight countries; all others use the
-  `default` (mean) profile, so country contrasts outside those eight reflect
-  population and disease burden more than local sodium structure.
+  are deterministic; no probabilistic sensitivity analysis is run here.
+- **LSS is a conservative lower bound.** The LSS effect is SSaSS-derived
+  (≈ 15% of discretionary sodium; sensitivity 0.12–0.18) and models the
+  **sodium arm only**. Because there is **no potassium channel**, the large
+  K⁺-driven share of SSaSS's observed −3.34 mmHg SBP effect is omitted, so the
+  modelled LSS benefit understates the trial. Its reduction is also restricted
+  to the hypertensive subpopulation when run as an individual scenario.
+- **Source shares** are documented for the ten prioritised countries, but the
+  Nigeria/Cameroon values are **provisional** (RTSL/Matti working estimates, with
+  Nigeria used as a proxy for Cameroon) and several others rest on single-study
+  or older survey data; any country outside this set would fall back to the
+  `default` (mean) profile.
 - **Independent-cause structure.** The four causes share one population but are
   modelled independently, so "all-cause" prevalence/incidence sum cause-specific
   cases and may count comorbid individuals more than once.
@@ -1333,4 +1618,291 @@ cat("Countries:        ", n_countries, "\n")
 cat("Scenarios:        ", paste(scenarios_present, collapse = ", "), "\n")
 cat("Year range:       ", study_years, "\n\n")
 sessionInfo()
+```
+
+---
+
+# Deck artifacts (slide-deck export) {#deck-export}
+
+This final section exists purely to hand computed elements to the Beamer slide
+deck `docs/UWRTSL-sodium-policy.Rmd`. **All computation for the deck happens
+here** (the deck itself performs none): every figure is written as a PNG and
+every table/number is written into a single `deck_data.rds` bundle. The deck
+loads that bundle and includes the PNGs, so the two documents can never drift.
+Artifacts are written to `docs/deck_assets/`.
+
+```{r deck-export, message=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+# ---- Output location --------------------------------------------------------
+deck_dir <- file.path(wd, "docs", "deck_assets")
+dir.create(deck_dir, recursive = TRUE, showWarnings = FALSE)
+
+save_fig <- function(plot, name, w, h) {
+  ggplot2::ggsave(filename = file.path(deck_dir, name), plot = plot,
+                  width = w, height = h, units = "in", dpi = 300, bg = "white")
+  invisible(name)
+}
+
+# Pre-render a data.frame to a booktabs LaTeX tabular, wrapped in \resizebox so
+# it can never overflow a 16:9 Beamer frame. escape = TRUE handles %, & etc.
+mk_tex <- function(df, align = NULL) {
+  if (is.null(align)) align <- c("l", rep("r", ncol(df) - 1L))
+  body <- knitr::kable(df, format = "latex", booktabs = TRUE, align = align,
+                       linesep = "", escape = TRUE, row.names = FALSE)
+  paste0("\\resizebox{\\textwidth}{!}{%\n", as.character(body), "\n}")
+}
+
+base_year <- SCALEUP_YEAR1
+lab_idx    <- paste0("Indexed (", base_year, " = 100)")
+
+# ---- FIG: sodium source shares by country -----------------------------------
+p_ss <- ggplot(shares_long, aes(location, share, fill = source)) +
+  geom_col(width = 0.78, colour = "white", linewidth = 0.2) +
+  scale_fill_manual(values = source_cols, labels = source_labels,
+                    breaks = SODIUM_SOURCES, name = "Sodium source") +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.02))) +
+  labs(x = NULL, y = "Share of total sodium intake") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 35, hjust = 1))
+save_fig(p_ss, "fig_source_shares.png", 10, 4.7)
+
+# ---- FIG: illustrative salteff by scenario (individual policies) -------------
+p_se <- ggplot(salteff_bar[scenario != "full_package"],
+               aes(location, contribution, fill = source)) +
+  geom_col(width = 0.8, colour = "white", linewidth = 0.15) +
+  facet_wrap(~ scn_lbl, ncol = 3, scales = "free_y") +
+  scale_fill_manual(values = source_cols, labels = source_labels,
+                    breaks = SODIUM_SOURCES, name = "Sodium source") +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.05))) +
+  labs(x = NULL, y = "salteff (fraction of total sodium reduced)") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+save_fig(p_se, "fig_salteff.png", 10.5, 5.6)
+
+# ---- FIG: full-package salteff by country ------------------------------------
+p_sepkg <- ggplot(salteff_bar[scenario == "full_package"],
+                  aes(location, contribution, fill = source)) +
+  geom_col(width = 0.72, colour = "white", linewidth = 0.15) +
+  scale_fill_manual(values = source_cols, labels = source_labels,
+                    breaks = SODIUM_SOURCES, name = "Sodium source") +
+  scale_y_continuous(labels = percent, expand = expansion(mult = c(0, 0.05))) +
+  labs(x = NULL, y = "Full-package salteff") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 35, hjust = 1))
+save_fig(p_sepkg, "fig_salteff_pkg.png", 9.5, 4.7)
+
+# ---- FIG: causal-chain flow diagram -----------------------------------------
+p_flow <- ggplot() +
+  geom_tile(data = boxes, aes(x = x, y = 1), width = 0.84, height = 0.7,
+            fill = "#e8eef4", color = "#1f78b4", linewidth = 0.6) +
+  geom_text(data = boxes, aes(x = x, y = 1, label = label), size = 3.4,
+            lineheight = 0.95) +
+  geom_segment(data = arrows, aes(x = x, xend = xend, y = y, yend = yend),
+               arrow = arrow(length = unit(0.16, "cm"), type = "closed"),
+               linewidth = 0.5, color = "grey30") +
+  coord_cartesian(xlim = c(0.5, 6.5), ylim = c(0.55, 1.45)) +
+  theme_void(base_size = 12)
+save_fig(p_flow, "fig_flow.png", 11, 2.8)
+
+# ---- FIG: baseline age-standardised mortality rate --------------------------
+p_asmr <- ggplot() +
+  geom_line(data = asmr_cause, aes(year, ASMR, color = cause_lbl,
+                                   linetype = year > hist_cut), linewidth = 1) +
+  geom_line(data = asmr_all, aes(year, ASMR, linetype = year > hist_cut),
+            color = "black", linewidth = 1.2) +
+  annotate("text", x = year_min + 1, y = max(asmr_all$ASMR),
+           label = "All CVD", hjust = 0, vjust = 1, fontface = "bold", size = 3.6) +
+  scale_color_manual(values = setNames(cause_cols, cause_map), name = "Cause") +
+  scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "dashed"),
+                        guide = "none") +
+  labs(x = "Year", y = "ASMR per 100,000") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+save_fig(p_asmr, "fig_baseline_asmr.png", 9.5, 5)
+
+# ---- FIG: projected incidence (level + indexed) -----------------------------
+inc_lvl <- proj_all[year >= 2020, .(scenario, year, value = inc_rate)][
+  , panel := "Incident cases per 1,000"]
+inc_ix  <- inc_idx[, .(scenario, year, value = inc_index)][, panel := lab_idx]
+inc_comb <- rbind(inc_lvl, inc_ix)
+inc_comb[, panel := factor(panel, levels = c("Incident cases per 1,000", lab_idx))]
+hl_inc <- data.table(panel = factor(lab_idx, levels = levels(inc_comb$panel)),
+                     yy = 100)
+p_inc <- ggplot(inc_comb, aes(year, value, colour = scenario)) +
+  geom_hline(data = hl_inc, aes(yintercept = yy), linetype = "dashed",
+             colour = "grey60", inherit.aes = FALSE) +
+  geom_line(linewidth = 0.9) +
+  facet_wrap(~ panel, scales = "free_y") +
+  scale_colour_manual(values = scenario_cols, labels = scenario_labels_short,
+                      breaks = scenario_levels, name = NULL) +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE)) +
+  labs(x = "Year", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+save_fig(p_inc, "fig_incidence.png", 10.5, 4.7)
+
+# ---- FIG: projected deaths (per 1,000 + indexed) ----------------------------
+proj_all[, dead_p1000 := dead / pop * 1000]
+d_lvl  <- proj_all[year >= 2020, .(scenario, year, value = dead_p1000)][
+  , panel := "Deaths per 1,000"]
+base_d <- proj_all[year == base_year, .(scenario, bv = dead_p1000)]
+d_ix   <- merge(proj_all[year >= base_year, .(scenario, year, dead_p1000)],
+                base_d, by = "scenario")
+d_ix   <- d_ix[!is.na(bv) & bv > 0]
+d_ix[, value := dead_p1000 / bv * 100]
+d_ix2  <- d_ix[, .(scenario, year, value)][, panel := lab_idx]
+d_comb <- rbind(d_lvl, d_ix2)
+d_comb[, panel := factor(panel, levels = c("Deaths per 1,000", lab_idx))]
+hl_d <- data.table(panel = factor(lab_idx, levels = levels(d_comb$panel)), yy = 100)
+p_d <- ggplot(d_comb, aes(year, value, colour = scenario)) +
+  geom_hline(data = hl_d, aes(yintercept = yy), linetype = "dashed",
+             colour = "grey60", inherit.aes = FALSE) +
+  geom_line(linewidth = 0.9) +
+  facet_wrap(~ panel, scales = "free_y") +
+  scale_colour_manual(values = scenario_cols, labels = scenario_labels_short,
+                      breaks = scenario_levels, name = NULL) +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE)) +
+  labs(x = "Year", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", panel.grid.minor = element_blank())
+save_fig(p_d, "fig_deaths.png", 10.5, 4.7)
+
+# ---- FIG: deaths delayed by scenario (headline result) ----------------------
+fig_res <- dd_cum[as.character(scenario) != "baseline"]
+fig_res[, scn_lbl := factor(scenario_labels_short[as.character(scenario)],
+                            levels = rev(scenario_labels_short[scenario_nb]))]
+p_res <- ggplot(fig_res, aes(deaths_delayed / 1e6, scn_lbl, fill = scenario)) +
+  geom_col(width = 0.68) +
+  geom_text(aes(label = fmt_m(deaths_delayed, 2)), hjust = -0.1, size = 3.6) +
+  scale_fill_manual(values = scenario_cols, guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.14)), labels = comma) +
+  labs(x = "Deaths delayed (millions)", y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+save_fig(p_res, "fig_results_bar.png", 9, 4.8)
+
+# ---- FIG: full package, deaths delayed by cause -----------------------------
+p_bc <- ggplot(dd_cause, aes(deaths_delayed / 1e6,
+                             reorder(cause_lbl, deaths_delayed), fill = cause)) +
+  geom_col(width = 0.68) +
+  geom_text(aes(label = fmt_m(deaths_delayed, 2)), hjust = -0.1, size = 3.6) +
+  scale_fill_manual(values = cause_cols, guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.14)), labels = comma) +
+  labs(x = "Deaths delayed (millions)", y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+save_fig(p_bc, "fig_bycause.png", 8.5, 3.9)
+
+# ---- FIG: full package, deaths delayed by country ---------------------------
+dd_ctry <- copy(dd_country)
+setorder(dd_ctry, -deaths_delayed)
+p_ct <- ggplot(dd_ctry, aes(deaths_delayed / 1e6, reorder(location, deaths_delayed))) +
+  geom_col(fill = "#1f78b4", width = 0.72) +
+  geom_text(aes(label = fmt_m(deaths_delayed, 2)), hjust = -0.1, size = 3.4) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15)), labels = comma) +
+  labs(x = "Deaths delayed (millions)", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+save_fig(p_ct, "fig_countries.png", 8.5, 5)
+
+# ---- TABLES (pre-rendered LaTeX) --------------------------------------------
+# Effect sizes (Table M2).
+tef <- as.data.frame(eff_disp)
+names(tef) <- c("Intervention", "Source", "Applied reduction", "Note")
+tef$Intervention <- as.character(tef$Intervention)
+tex_effect_sizes <- mk_tex(tef, align = c("l", "l", "r", "l"))
+
+# Illustrative salteff by scenario x country (Table M4).
+tsl <- as.data.frame(salteff_grid)
+tex_salteff <- mk_tex(tsl, align = c("l", rep("r", ncol(tsl) - 1L)))
+
+# Source shares (Table M1).
+tss <- as.data.frame(ss_disp)
+tex_source_shares <- mk_tex(tss, align = c("l", rep("r", ncol(tss) - 1L)))
+
+# Headline results (compact Table 1).
+tr <- dd_cum[as.character(scenario) != "baseline"]
+tr[, scenario := factor(as.character(scenario), levels = scenario_levels)]
+setorder(tr, scenario)
+tres <- data.frame(
+  Scenario                    = unname(scenario_labels[as.character(tr$scenario)]),
+  `Deaths delayed (millions)` = fmt_m(tr$deaths_delayed, 3),
+  `Avg per year (thousands)`  = fmt_k(tr$per_year, 1),
+  `% of baseline`             = fmt_pct(tr$pct_vs_base, 2),
+  check.names = FALSE, row.names = NULL, stringsAsFactors = FALSE
+)
+tex_results <- mk_tex(tres, align = c("l", "r", "r", "r"))
+
+# ---- NUMBERS ----------------------------------------------------------------
+pkg_row <- dd_cum[as.character(scenario) == "full_package"]
+vn_sanity <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam",
+                                               source_shares, intervention_effects))
+
+nums <- list(
+  n_countries    = n_countries,
+  study_years    = study_years,
+  impact_window  = impact_window,
+  scaleup1       = SCALEUP_YEAR1,
+  scaleup2       = SCALEUP_YEAR2,
+  horizon_end    = impact_y2,
+  # headline deaths delayed (millions, formatted strings)
+  pkg_m          = fmt_m(ddc("full_package"), 2),
+  pkg_per_year_k = fmt_k(pkg_row$per_year, 0),
+  pkg_pct        = fmt_pct(pkg_row$pct_vs_base, 1),
+  salt_targets_m = fmt_m(ddc("salt_targets"), 2),
+  fopl_m         = fmt_m(ddc("fopl"), 2),
+  fiscal_m       = fmt_m(ddc("fiscal"), 2),
+  public_m       = fmt_m(ddc("public_procurement"), 2),
+  media_m        = fmt_m(ddc("media_campaign"), 2),
+  lss_m          = fmt_m(ddc("lss"), 2),
+  # applied per-source effect sizes (must mirror EFF_* in 07_run_interventions.R)
+  eff_public       = fmt_pct(EFF_PROCUREMENT_PUBLIC, 0),
+  eff_media        = fmt_pct(EFF_MEDIA, 1),
+  eff_fopl         = fmt_pct(EFF_FOPL_PACKAGED, 1),
+  eff_salttargets  = fmt_pct(EFF_SALTTARGETS_PACKAGED, 0),
+  eff_fiscal       = fmt_pct(EFF_FISCAL_PACKAGED, 0),
+  eff_lss          = fmt_pct(EFF_LSS_DISCRETIONARY, 0),
+  lss_sens         = "0.12--0.18",
+  vn_sanity        = formatC(vn_sanity, format = "f", digits = 4),
+  # worked composition example: FOPL + salt targets on 'packaged'
+  compose_fopl_salt = fmt_pct(1 - (1 - EFF_FOPL_PACKAGED) * (1 - EFF_SALTTARGETS_PACKAGED), 1),
+  # LSS / SSaSS trial constants (surfaced so the deck states no raw numbers itself)
+  ssass_na_mgday   = "-350 mg/day",
+  ssass_base_gday  = "4.3 g/day",
+  ssass_sbp_mmhg   = "-3.34 mmHg",
+  ssass_k_mgday    = "+803 mg/day",
+  lss_ratio        = "75% NaCl / 25% KCl"
+)
+
+figs <- list(
+  source_shares = "fig_source_shares.png",
+  salteff       = "fig_salteff.png",
+  salteff_pkg   = "fig_salteff_pkg.png",
+  flow          = "fig_flow.png",
+  baseline_asmr = "fig_baseline_asmr.png",
+  incidence     = "fig_incidence.png",
+  deaths        = "fig_deaths.png",
+  results_bar   = "fig_results_bar.png",
+  bycause       = "fig_bycause.png",
+  countries     = "fig_countries.png"
+)
+
+tex <- list(
+  effect_sizes  = tex_effect_sizes,
+  salteff       = tex_salteff,
+  source_shares = tex_source_shares,
+  results       = tex_results
+)
+
+deck <- list(nums = nums, figs = figs, tex = tex)
+saveRDS(deck, file = file.path(deck_dir, "deck_data.rds"))
+
+message("Deck artifacts written to: ", deck_dir)
+message("  figures: ", paste(unlist(figs), collapse = ", "))
+message("  bundle : deck_data.rds")
 ```

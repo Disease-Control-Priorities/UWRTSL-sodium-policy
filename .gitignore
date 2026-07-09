@@ -19,6 +19,9 @@ output/out_model/**/*.*
 # Ignore report files folder
 reports/report_files/
 
+# Ignore slide deck folder files folder
+docs/deck_assets/
+
 # Ignore RStudio project user files
 .Rproj.user
 

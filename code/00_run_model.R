@@ -108,6 +108,7 @@ source("05_build_baseline.R")
 # 06. Run model ----
 #...........................................................
 
-# Run Aim 1: multiple interventions
 setwd(wd_code)
-source("06_run_scenarios_targets.R")
+#source("06_run_scenarios_targets.R")
+source("07_run_interventions.R")
+
