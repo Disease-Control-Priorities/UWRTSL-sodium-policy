@@ -78,7 +78,7 @@ From the previous presentation and discussion:
 \end{columns}
 
 \medskip
-\footnotesize Today we present the **current build** of the model and **preliminary results** for the prioritized countries.
+\footnotesize Today we present the **current build** of the model and \alert{preliminary results} for the prioritized countries.
 
 ## Today's agenda
 
@@ -169,8 +169,10 @@ Baseline sodium is partitioned into **five mutually exclusive sources** (shares 
 knitr::include_graphics(fig("source_shares"))
 ```
 
-\scriptsize Country data where available; otherwise predicted from GDP per capita \autocite{marklund2022sources}. **Nigeria/Cameroon** use provisional RTSL/Matti shares (bouillon + condiments counted as packaged; Nigeria a proxy for Cameroon).
+\scriptsize Country data where available; otherwise predicted from GDP per capita \autocite{marklund2022sources}. Nigeria (a proxy for Cameroon) use provisional data.
 
+ <!-- **Nigeria/Cameroon** use provisional RTSL/Matti shares (bouillon + condiments counted as packaged; Nigeria a proxy for Cameroon). -->
+ 
 ## Applied salt-effect ($\eta$) by intervention
 
 \justifying
@@ -208,7 +210,7 @@ tbl("salteff")
 \justifying
 \footnotesize
 
-Bar height = each country's full-package `salteff`; segments show the per-source contributions ($\text{share}_s \times \text{composed}_s$).
+Bar height = each country's full-package `salteff`; segments show the per-source contributions ($\text{share}_s \times \text{composed}_s$). \alert{No applied effect to restaurants (conservative)}
 
 ```{r fig-salteff-pkg, out.width="82%"}
 knitr::include_graphics(fig("salteff_pkg"))
@@ -280,16 +282,21 @@ LSS is no longer a placeholder: it is derived from the **Salt Substitute and Str
 
 - **Effect size:** a `r N$lss_ratio` substitute delivered an ITT net **`r N$ssass_na_mgday`** sodium reduction against a **`r N$ssass_base_gday`** baseline $\Rightarrow$ **`r N$eff_lss` of discretionary sodium** (sensitivity `r N$lss_sens`). Applied to the discretionary source.
 
+- **Alternative trial-effect specification:** use the SSaSS outcome RRs directly, applying RR = 0.87 to CVD incidence in hypertensive BP bins (SBP $\geq$ 140) and RR = 0.88 to CFR, scaled by the hypertension-attributable share of CVD deaths.
+
 \medskip
-\begin{uncertaintyblock}{Two deliberately conservative choices}
+\begin{uncertaintyblock}{Conservative choices}
 \footnotesize
 \begin{itemize}
   \item \textbf{Hypertensive-only reach.} As its own scenario, the reduction applies only to raised-BP bins (SBP $\geq$ 140); in the \emph{full package} it composes across all bins.
-  \item \textbf{No potassium channel.} SSaSS also raised urinary potassium (`r N$ssass_k_mgday`), which drove much of the observed `r N$ssass_sbp_mmhg` SBP effect. With no K\textsuperscript{+} pathway, the model captures only the sodium-mediated benefit --- a \textbf{lower bound}.
 \end{itemize}
 \end{uncertaintyblock}
 
-\scriptsize Per the May call: include potassium in future work; focus on discretionary scenarios 4/5 \autocite{huang2026}.
+<!-- \item \textbf{No potassium channel.} SSaSS also raised urinary potassium (`r N$ssass_k_mgday`), which drove much of the observed `r N$ssass_sbp_mmhg` SBP effect. With no K\textsuperscript{+} pathway, the model captures only the sodium-mediated benefit --- a \textbf{lower bound}. -->
+  
+<!-- \scriptsize Per the May call: include potassium in future work \alert{in progress but implicitly covered in current version}; focus on discretionary scenarios 4/5 \autocite{huang2026}. -->
+
+\scriptsize Per the May call: include potassium in future work. \alert{Alternative specification (In progress):} direct SSaSS trial-effect pathway, implicitly capturing both sodium reduction and potassium substitution; focus on discretionary scenarios 4/5 \autocite{Neal2021LSSTrial,huang2026}.
 
 <!-- ======================================================================
      5. BASELINE AND PROJECTIONS
@@ -450,6 +457,45 @@ Where should we push hardest before the reinvestment deliverable --- e.g data (s
      ====================================================================== -->
 
 # Appendix
+
+## Appendix: sodium-reduction levers are source-specific
+
+\justifying
+\scriptsize
+
+\begin{columns}[T]
+\begin{column}{0.50\textwidth}
+\textbf{Institutional framing}
+\begin{itemize}
+  \item WHO/PAHO frame sodium reduction as a \textbf{government-led policy package}, not individual education alone.
+  \item Core target: shift the \textbf{food environment} so lower-sodium choices become the default.
+  \item Stronger instruments are increasingly favored: \textbf{mandatory standards, procurement rules, warning labels, reformulation targets, and monitoring/enforcement}.
+\end{itemize}
+\end{column}
+
+\begin{column}{0.50\textwidth}
+\textbf{How this maps to the model}
+\begin{itemize}
+  \item Each policy acts only on the sodium source it can plausibly reach:
+  \begin{itemize}
+    \scriptsize
+    \item procurement $\rightarrow$ public meals
+    \item FOPL / salt targets / fiscal $\rightarrow$ packaged foods
+    \item LSS $\rightarrow$ discretionary salt
+    \item media $\rightarrow$ discretionary + packaged
+  \end{itemize}
+  \item Effects are composed by source, then translated into total sodium reduction $\eta$.
+\end{itemize}
+\end{column}
+\end{columns}
+
+\medskip
+\begin{block}{Interpretation}
+\scriptsize
+The full package is not a single intervention: it represents a coordinated regulatory, market, and behavior-change strategy that reduces sodium through the sources that dominate intake in each country.
+\end{block}
+
+\scriptsize Sources: WHO sodium-reduction guidance and SHAKE package; WHO public procurement framework; WHO global sodium benchmarks; PAHO front-of-package labelling and nutrient profile model; CDC Food Service Guidelines.
 
 ## Appendix: per-intervention methods
 

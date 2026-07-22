@@ -26,11 +26,20 @@ analysis code is in `code/`; the Shiny app is in `www/`.
     data/processed/  Committed model inputs (.rds/.csv) the pipeline consumes
     data/interim/    Scratch space (currently empty)
     www/          Shiny application (app.R) + its own CSV inputs
-    output/out_model/  Per-country model_output_sodium_<country>.rds + logs (git-ignored)
-    docs/         R Markdown reports, Beamer slides, math write-up, references.bib
-    reports/      report.RMD → report.html
+    output/out_model/  Per-country model_output_*_<country>.rds + logs (git-ignored)
+    reports/      report.RMD → report.html — the reporting/analysis layer (see below)
+    docs/         Beamer deck + math write-up + references.bib + deck_assets/
     library/      Literature PDFs (a *reference* library, NOT an R package library)
+    dev/          Untracked scratch area — old drafts, PDFs, prompts; NOT pipeline
     tests/        Placeholder only — no automated tests exist
+
+`docs/` holds the Beamer deck (`UWRTSL-sodium-policy.Rmd`), the math
+write-up (`sodium-policy-math-doc.Rmd`/`.docx`), `beamer_preamble.tex`,
+`references.bib`, source data workbooks (`.docx`/`.xlsx`), and
+`deck_assets/` (the figures + `deck_data.rds` bundle the deck consumes).
+Office documents (`.pdf`/`.doc*`/`.ppt*`), all `.html`, `deck_assets/`,
+`reports/report_files/`, and `.claude/` are git-ignored (see
+`.gitignore`).
 
 Note: every subdirectory `README.md` is an identical boilerplate copy of
 the project overview and carries no directory-specific information —
@@ -81,18 +90,24 @@ libraries, defines control flags, and sources `01`–`05` followed by
   cores), writing `output/out_model/model_output_sodium_<country>.rds`
   and a per-country log.
 - **`07_run_interventions.R`** — a newer **source-split** refactor of
-  `06_targets`: splits baseline sodium into five sources (discretionary,
-  packaged, restaurant, public, inherent; shares sum to 1) and applies
-  each intervention's documented reduction only to the sources it
-  affects, composing multiple policies on one source without
-  double-counting. Produces the same `out_model` outputs and shares the
-  downstream pathway with `06`; the only change is how the scalar
-  `salteff` is derived. Run this **instead of** `06_targets` for the
+  `06_targets`, and the path the reporting layer consumes. Splits
+  baseline sodium into five sources (discretionary, packaged, restaurant,
+  public, inherent; per-country shares sum to 1, from
+  `build_sodium_source_shares` → `data/processed/sodium_source_shares.rds`,
+  with a `default` row for unlisted countries) and applies each
+  intervention's documented reduction only to the sources it affects,
+  composing multiple policies on one source without double-counting.
+  `compute_total_efficacy()` resolves the country-specific scalar
+  `salteff` fed to `calculate_sodium_impact_etihad`; the rest of the
+  downstream pathway is shared with `06`. Writes
+  `model_output_interventions_<country>.rds` (distinct filename from
+  `06_targets`, which writes `model_output_sodium_<country>.rds`),
+  parallelised over 6 cores. Run this **instead of** `06_targets` for the
   source-split analysis — it is not sourced by `00_run_model.R`.
 
 Scenario framing: **Progress** (15% sodium reduction by 2030) and
 **Aspirational** (30% by 2030), with a scale-up window of ~2026–2030 and
-a projection horizon to 2040.
+a projection horizon to 2050 (results reported at 2030/2040/2050).
 
 ------------------------------------------------------------------------
 
@@ -104,9 +119,33 @@ the ambient R library. Loaded via `library()`:
 - **Model pipeline:** `data.table`, `dplyr`, `tidyr`, `ggplot2`,
   `RColorBrewer`, `readxl`, `countrycode`, `stringr`, `parallel`,
   `doParallel`, `foreach`, `gmodels`, `forecast`.
+- **Reporting (`reports/report.RMD`):** `data.table`, `ggplot2`, `knitr`,
+  `kableExtra`, `DT`, `scales`.
 - **Shiny app (`www/app.R`):** `shiny`, `shinydashboard`, `shinyWidgets`,
   `shinyjs`, `shinycssloaders`, `DT`, `plotly`, `networkD3`,
   `rhandsontable`, `htmlwidgets`, plus `data.table`/`dplyr`/`tidyr`/`ggplot2`.
+
+------------------------------------------------------------------------
+
+# Reporting Layer (`reports/` → `docs/`)
+
+Results, figures, and narrative live in a **two-stage document chain**,
+not in the R scripts:
+
+- **`reports/report.RMD`** is the single source of truth for reported
+  output. It reads the source-split run's
+  `output/out_model/model_output_interventions_*.rds` (**not** the
+  `06_targets` `_sodium_` files) plus `data/processed/` inputs, computes
+  every figure/table/number, and renders `report.html`. Its final
+  `deck-export` chunk writes each figure and a `deck_data.rds` bundle
+  (`$nums`, `$figs`, `$tex`) into `docs/deck_assets/`.
+- **`docs/UWRTSL-sodium-policy.Rmd`** is the Beamer deck. It performs
+  **zero recomputation** — its setup chunk loads `deck_data.rds` and only
+  lays out the pre-rendered artifacts. It errors if the bundle is
+  missing, so **render `report.RMD` before knitting the deck.**
+
+Keep this invariant: put analysis/number-crunching in `report.RMD`; the
+deck only presents.
 
 ------------------------------------------------------------------------
 
@@ -148,12 +187,14 @@ presentation layer, not the source of truth for results.
 - **Full model:** open the project (`uwrtsl-sodium-policy.Rproj`) and
   source `code/00_run_model.R` after fixing `wd`. Outputs land in
   `output/out_model/`.
-- **Source-split variant:** source `01`–`05`, then
-  `code/07_run_interventions.R`.
+- **Source-split variant (feeds the report):** source `01`–`05`, then
+  `code/07_run_interventions.R` → `model_output_interventions_*.rds`.
 - **App:** run `shiny::runApp("www")` (requires the app's CSV inputs).
-- **Reports/slides:** knit `docs/*.Rmd` (Beamer slides use
-  `beamer_preamble.tex` and cite `references.bib`); `reports/report.RMD`
-  renders `report.html`.
+- **Report then slides (order matters):** knit `reports/report.RMD`
+  (renders `report.html` and regenerates `docs/deck_assets/` +
+  `deck_data.rds`), *then* knit `docs/UWRTSL-sodium-policy.Rmd` (Beamer
+  deck; uses `beamer_preamble.tex`, cites `references.bib`). The math
+  write-up `docs/sodium-policy-math-doc.Rmd` is standalone.
 
 There is no build system or test suite; the deliverable is the R script
 pipeline plus the app and rendered documents.
