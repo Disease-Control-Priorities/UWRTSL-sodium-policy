@@ -1,0 +1,541 @@
+RECOMMENDED PLAN TO UPDATE THE SODIUM-POLICY PIPELINE
+
+1. OVERALL APPROACH
+
+The current pipeline already has the correct source-split foundation: sodium is divided into discretionary, packaged, restaurant, public procurement, and inherent sources, and overlapping interventions are combined multiplicatively. However, it then collapses those effects into a single, static country-level salteff value. That is no longer sufficient because the requested changes require effects that vary by year, sodium source, intervention, and eligible population subgroup.
+
+The update should therefore preserve the downstream disease model while replacing the upstream scalar calculation with a year-specific intervention engine:
+
+country × year × source × intervention × target population.
+
+This is preferable to rewriting the incidence, case-fatality, and state-transition components.
+
+
+2. DECISIONS FROM THE LATEST EMAILS
+
+The newest email should supersede earlier meeting notes:
+
+1. Exclude behavior change/mass media from the production scenarios.
+2. Include fiscal policy.
+3. Model LSS scenarios 4 and 5 only for now:
+   - diagnosed hypertension;
+   - treated hypertension.
+4. Investigate household uptake for LSS rather than assuming that only the identified hypertensive individual changes salt use.
+5. Replace the current 5% public-procurement source assumption with revised adult-only estimates, because the model excludes children and therefore should not count school procurement.
+6. Incorporate Euromonitor packaged-food trends.
+7. Use an explicit, configurable policy ramp-up rather than embedding years in several scripts.
+
+The attached source document still uses 5% for public procurement, while the later email says it should be reduced. Therefore, the new adult-only value is a required input and should not be guessed. The code should stop with an informative warning when adult_population_only = TRUE but the old 5% values remain.
+
+
+3. TARGET PIPELINE STRUCTURE
+
+00_run_model.R — configuration and orchestration only
+
+Move all user-controlled parameters here:
+
+MODEL_START_YEAR <- 2026L
+MODEL_END_YEAR   <- 2050L
+
+POLICY_START_YEAR <- 2026L
+POLICY_FULL_YEAR  <- 2030L
+
+COUNTRIES <- c(...)
+
+INTERVENTIONS <- c(
+  "public_procurement",
+  "fopl",
+  "salt_targets",
+  "fiscal",
+  "lss_diagnosed_htn",
+  "lss_treated_htn"
+)
+
+INCLUDE_MEDIA <- FALSE
+INCLUDE_LSS_IN_FULL_PACKAGE <- FALSE
+
+PACKAGED_TREND_METHOD <- "euromonitor_prediction_apc"
+PACKAGED_TREND_AFTER_2030 <- "hold_constant"
+
+FISCAL_METHOD <- "fixed_effect"  # or "elasticity"
+LSS_METHOD    <- "trial_rr"      # or "sodium_sbp_sensitivity"
+
+It should also:
+
+- use project-relative paths through here::here() or environment variables;
+- create output directories;
+- source scripts in order;
+- pass a single config object into functions.
+
+The current runner contains machine-specific Windows paths and separate working directories, which makes reproduction and parallel execution fragile.
+
+
+01_utils.R — generic helpers only
+
+Keep only reusable utilities:
+
+- location-name harmonization;
+- year expansion;
+- interpolation and ramp functions;
+- probability and relative-risk helpers;
+- validation utilities;
+- output formatting.
+
+Move intervention assumptions and sodium-specific policy functions out of this script.
+
+
+02_load_inputs.R — read data, do not model scenarios
+
+This script should only load raw and previously processed inputs:
+
+- baseline sodium intake;
+- baseline source shares;
+- Euromonitor trends;
+- intervention effect-size table;
+- public-procurement adult shares;
+- household size;
+- hypertension diagnosis, treatment, and control coverage;
+- price elasticities;
+- LSS effect and safety parameters.
+
+At present, 02_load_inputs.R creates a constant 2025–2050 sodium series from the 2024 value and immediately creates target scenarios. Those operations should move to the intervention-preparation stage.
+
+
+03_clean_inputs.R — canonical processing layer
+
+This currently almost-empty script should become the main input-processing stage. It should:
+
+- harmonize country names;
+- convert sodium and salt units consistently;
+- validate country coverage;
+- construct non-overlapping Euromonitor categories;
+- prepare country-year packaged-food indices;
+- prepare long-format sodium-source shares;
+- validate that source shares sum to one;
+- create explicit records where proxies are used;
+- report missing and fallback inputs.
+
+Recommended processed tables:
+
+sodium_source_shares_base.rds
+packaged_food_trends.rds
+intervention_effects.rds
+fiscal_parameters.rds
+lss_parameters.rds
+policy_coverage.rds
+
+
+04_define_intervention.R — the intervention engine
+
+Consolidate all policy definitions here. The current 04_define_intervention.R and 07_run_interventions.R contain overlapping intervention functions and assumptions. There should be one authoritative implementation.
+
+Recommended functions:
+
+build_source_trajectory()
+build_policy_coverage()
+build_intervention_effect_curve()
+compose_source_effects()
+calculate_fiscal_effect()
+calculate_lss_effect()
+build_scenario_configs()
+validate_policy_inputs()
+
+
+05_build_baseline.R — policy-free baseline
+
+This script should:
+
+- build epidemiological baseline rates;
+- construct the natural-history projection;
+- use the model years supplied in config;
+- contain no intervention assumptions.
+
+The model horizon must be derived from MODEL_START_YEAR and MODEL_END_YEAR. The current state-transition loop is explicitly fixed at 41 steps, projecting 2017–2058, even though downstream comparisons focus on 2050.
+
+
+07_run_interventions.R — scenario runner only
+
+After refactoring, this script should:
+
+1. receive processed inputs and config;
+2. create country-specific scenarios;
+3. calculate year-specific source reductions;
+4. translate reductions into SBP or direct outcome effects;
+5. call the existing epidemiological model;
+6. save results and an assumptions audit file.
+
+It should no longer define effect-size constants, source shares, country lists, years, or LSS eligibility rules.
+
+
+4. EUROMONITOR PACKAGED-FOOD TREND MODULE
+
+The Euromonitor trend workbook contains:
+
+- all observed trends for 2011–2025;
+- post-COVID trends for 2023–2025;
+- predicted trends for 2025–2030;
+- APC and linear-trend estimates by packaged-food category.
+
+The email confirms that the forecast sheet is intended to support a new model trend assumption.
+
+Recommended base case
+
+Use the 2025–2030 predicted APC because it directly matches the forward policy period:
+
+I(c,t) = (1 + g(c))^(t - 2025), for 2025 <= t <= 2030,
+
+where g(c) is the country-specific packaged-food growth rate.
+
+After 2030, hold the index constant in the primary analysis. Continuing compound growth through 2050 should only be a sensitivity analysis and should have a cap.
+
+
+Category aggregation
+
+Do not calculate a simple mean over every workbook row. The workbook contains both parent and child categories—for example:
+
+- Meals and Soups, Ready Meals, and Soup;
+- Dairy and Cheese.
+
+Including all of them would double count related sales.
+
+Use one of the following:
+
+1. Preferred: non-overlapping leaf categories weighted by 2025 sales volume and, ideally, category-specific sodium density.
+2. Interim: median APC across selected non-overlapping categories.
+3. Sensitivity: post-COVID APC and full-observation AAPC.
+
+
+Updating source shares
+
+For the primary model, treat Euromonitor growth as a change in the composition of sodium sources, not automatically as an increase in total sodium intake:
+
+w_packaged(c,t) =
+[w_packaged(c,2025) × I(c,t)] /
+[w_packaged(c,2025) × I(c,t) + sum of all non-packaged source shares].
+
+Renormalize the remaining sources proportionally so that annual shares still sum to one. A sensitivity analysis can allow packaged-food growth to increase total sodium intake.
+
+This makes packaged-food policies progressively more consequential without assuming that each kilogram of packaged-food sales translates one-for-one into sodium consumption.
+
+
+5. FISCAL-POLICY MODULE
+
+The current code includes fiscal policy in the registry but sets its packaged-source effect to zero, despite the comment referring to 10%.
+
+Implement two versions.
+
+
+Primary deliverable: transparent fixed effect
+
+Use the current project assumption as a provisional base case:
+
+fiscal_effect_on_packaged_sodium <- 0.10
+
+Apply it only to packaged sodium that is covered by the nutrient-profile tax. Include a configurable taxable_packaged_share; otherwise the model implicitly assumes every packaged food is taxed.
+
+
+Structural sensitivity: elasticity-based model
+
+For category k:
+
+demand_ratio(c,k) = (1 + tax_rate(c) × pass_through(c)) ^ elasticity(c,k).
+
+Then:
+
+sodium_reduction(c,t) =
+sum over k [
+  sodium(c,k,t) × tax_coverage(c,k) ×
+  {1 - (1 + tax_rate(c) × pass_through(c)) ^ elasticity(c,k)}
+].
+
+Green et al. provide income-stratified elasticities and show that demand is generally more responsive in lower-income countries. Their all-food estimates are approximately -0.74, -0.68, and -0.56 for low-, middle-, and high-income countries, respectively, with substantial variation across food groups.
+
+These values should be used as a sensitivity module rather than treated as a complete fiscal-policy effect because they do not directly provide:
+
+- the share of packaged sodium subject to the tax;
+- reformulation responses;
+- cross-price substitution;
+- category-specific sodium density.
+
+
+6. LSS REDESIGN — HIGHLIGHTING THE CHINA SSaSS EFFECT SIZES
+
+The current LSS implementation should be replaced rather than incrementally patched.
+
+Currently:
+
+- LSS is represented as a 15% discretionary-sodium reduction;
+- normotensive BP bins are zeroed out;
+- eligibility is defined using SBP bins rather than diagnosis or treatment status;
+- the restriction is applied only when LSS is the sole intervention;
+- potassium is not modeled.
+
+This means that LSS behaves differently—and incorrectly—when included in a combined package.
+
+
+Define two distinct scenarios
+
+lss_diagnosed_htn
+lss_treated_htn
+
+Use actual diagnosis and treatment coverage from the HTN/HEARTS inputs rather than bp_cat >= 140.
+
+
+Separate eligibility, uptake, and effectiveness
+
+For each country-year, represent:
+
+effective_reach =
+eligible_population × availability × household_adoption ×
+(1 - clinical_exclusion).
+
+Household spillover should use country-specific household size and a clearly defined probability model; it should not simply multiply individual coverage by household size because that can produce coverage above 100% or double count households.
+
+
+CHINA SALT SUBSTITUTE AND STROKE STUDY (SSaSS): EFFECT SIZES TO HIGHLIGHT
+
+Study population and intervention:
+
+- Cluster-randomized trial in 600 rural Chinese villages.
+- 20,995 participants; mean follow-up 4.74 years.
+- Participants had a history of stroke or were at least 60 years old with high blood pressure.
+- Mean age: 65.4 years.
+- History of stroke: 72.6%.
+- Diagnosed hypertension: 88.4%.
+- Antihypertensive medication use: 79.3%.
+- Salt substitute composition: 75% sodium chloride and 25% potassium chloride.
+- The intervention was supplied for household cooking, seasoning, and food preservation, so the observed effect reflects household-level use rather than an isolated individual-level clinical exposure.
+
+Intermediate effects:
+
+- Systolic blood pressure: -3.34 mm Hg
+  95% CI: -4.51 to -2.18.
+- 24-hour urinary sodium: -350 mg/day
+  95% CI: -545 to -154.
+- 24-hour urinary potassium: +803 mg/day
+  95% CI: +714 to +897.
+
+Primary and major clinical effects:
+
+- Total stroke:
+  RR 0.86
+  95% CI: 0.77 to 0.96.
+- Major adverse cardiovascular events:
+  RR 0.87
+  95% CI: 0.80 to 0.94.
+- Death from any cause:
+  RR 0.88
+  95% CI: 0.82 to 0.95.
+- Vascular death:
+  RR 0.87
+  95% CI: 0.79 to 0.96.
+
+Stroke subtype and severity effects:
+
+- Fatal stroke:
+  RR 0.77
+  95% CI: 0.65 to 0.91.
+- Nonfatal stroke:
+  RR 0.90
+  95% CI: 0.80 to 1.01.
+- Ischemic stroke:
+  RR 0.93
+  95% CI: 0.82 to 1.05.
+- Hemorrhagic stroke:
+  RR 0.69
+  95% CI: 0.56 to 0.85.
+- Fatal or disabling stroke:
+  RR 0.84
+  95% CI: 0.73 to 0.97.
+- Nonfatal acute coronary syndrome:
+  RR 0.70
+  95% CI: 0.52 to 0.93.
+
+Safety:
+
+- Serious hyperkalemia:
+  RR 1.04
+  95% CI: 0.80 to 1.37.
+- There was no statistically significant increase in serious hyperkalemia.
+- The trial excluded people with known serious kidney disease, potassium-sparing diuretic use, potassium supplementation, or other household contraindications. The model should therefore include a configurable clinical-exclusion fraction rather than applying the trial effect to everyone.
+
+
+Recommended mapping to the model
+
+Primary implementation:
+
+- Apply RR 0.86 to total stroke incidence among reached and clinically eligible people.
+- For a model that reports total vascular mortality directly, apply RR 0.87 to vascular mortality instead of applying the all-cause mortality RR.
+- Use RR 0.88 for all-cause mortality only in a separate validation or sensitivity analysis because the current sodium model focuses on selected cardiovascular causes.
+- For stroke subtype sensitivity analyses:
+  - ischemic stroke incidence RR = 0.93;
+  - hemorrhagic stroke incidence RR = 0.69.
+
+Important double-counting rule:
+
+Do not simultaneously apply the total-stroke RR of 0.86 to incidence and the fatal-stroke RR of 0.77 directly to case fatality. The fatal-stroke RR already reflects the combined effect on stroke occurrence and fatality. Applying both as independent multipliers would exaggerate the effect.
+
+Use one of these coherent approaches:
+
+A. Incidence pathway:
+   - Stroke incidence multiplier = 0.86.
+   - Leave stroke case fatality unchanged unless a conditional case-fatality effect is formally derived and justified.
+
+B. Outcome-specific pathway:
+   - Apply RR 0.77 directly to fatal stroke outcomes.
+   - Apply RR 0.90 directly to nonfatal stroke outcomes.
+   - Do not also apply RR 0.86 to incidence.
+
+C. Subtype pathway:
+   - Apply RR 0.93 to ischemic stroke incidence.
+   - Apply RR 0.69 to hemorrhagic stroke incidence.
+   - Do not additionally apply the total-stroke RR.
+
+The preferred base case is approach A because it maps most cleanly to the existing incidence/case-fatality architecture and uses the prespecified primary trial outcome. Approaches B and C should be sensitivity analyses.
+
+
+Primary effect: trial-based pathway
+
+Use the SSaSS trial relative risks directly for the reached population. This captures the combined sodium-reduction and potassium-increase effect, which the team identified as essential.
+
+The sodium-to-SBP method can remain as a sensitivity analysis using the observed -3.34 mm Hg effect, rather than reconstructing the effect solely from the -350 mg/day sodium change. The potassium increase of +803 mg/day contributed to the observed blood-pressure and clinical benefit.
+
+Do not apply both the direct trial RR and the sodium-mediated SBP effect in the same scenario unless the trial effect has first been decomposed; otherwise the benefit would be double counted.
+
+For now, keep both LSS scenarios separate from the full_package scenario until the subgroup-specific implementation has passed validation.
+
+Source:
+Neal B, Wu Y, Feng X, et al. Effect of Salt Substitution on Cardiovascular Events and Death. New England Journal of Medicine. 2021;385:1067-1077. DOI: 10.1056/NEJMoa2105675.
+
+
+7. HARMONIZING POLICY RAMP-UP
+
+The evidence document contains effects observed over very different periods, and the team explicitly requested harmonization.
+
+Store these separately:
+
+policy_start_year
+full_implementation_year
+effect_reference_period
+curve_type
+full_effect
+
+Recommended base case:
+
+- implementation begins in 2026;
+- linear scale-up to full implementation in 2030;
+- effect remains constant after 2030.
+
+Treat the reported effect size as the full implementation effect, rather than mechanically converting every study result into an annual percentage reduction.
+
+Sensitivity analyses:
+
+- 3-year rapid implementation;
+- 5-year base implementation;
+- 7-year slow implementation;
+- study-specific realization periods where justified.
+
+The source trend and intervention ramp must be applied separately:
+
+annual_contribution(s,t) =
+source_share(s,t) × full_effect(s) × implementation_fraction(t).
+
+Overlapping policies affecting the same source should continue to be composed multiplicatively.
+
+
+8. TESTING AND VALIDATION PLAN
+
+Unit tests
+
+Add tests/testthat/ tests for:
+
+- source shares sum to one for every country-year;
+- no source share or intervention effect is negative;
+- inherent sodium is never targeted;
+- parent and child Euromonitor categories are not both included;
+- 2025 packaged index equals one;
+- trend behavior after 2030 follows the selected rule;
+- overlapping effects use 1 - product(1 - effect_i);
+- media is absent from production scenarios;
+- fiscal effect is nonzero when enabled;
+- LSS scenarios use diagnosed/treated eligibility correctly;
+- household reach remains between zero and one;
+- clinical exclusions are applied before LSS effects;
+- LSS remains subgroup-specific inside a combined scenario;
+- direct LSS trial RRs and sodium/SBP effects are never applied simultaneously;
+- model results contain every configured year.
+
+
+Regression tests
+
+Before changing results:
+
+1. Save the existing outputs for two contrasting countries:
+   - China, with high discretionary sodium;
+   - Viet Nam, with high packaged sodium.
+2. Refactor the pipeline while preserving the old outputs under a legacy_static configuration.
+3. Only then activate the new public-source, Euromonitor, fiscal, and LSS assumptions.
+
+
+External validation
+
+Compare:
+
+- policy-specific sodium reductions with the effect-size document;
+- China LSS results with the SSaSS event rates and relative risks;
+- LSS country results with the selected TGI/SSaSS benchmarks;
+- total deaths averted with the earlier 100 Million Lives model;
+- intervention rankings under static versus dynamic packaged-food shares.
+
+
+9. REQUIRED OUTPUT AUDIT TRAIL
+
+For every country, scenario, and year, save:
+
+baseline sodium intake
+source-specific sodium amounts
+source shares
+Euromonitor trend index
+eligible population
+diagnosed or treated hypertension coverage
+household adoption
+clinical-exclusion fraction
+effective LSS reach
+policy coverage
+full intervention effect
+implementation fraction
+composed source effect
+total sodium reduction
+SBP reduction or direct RR
+incidence multiplier
+case-fatality multiplier
+events and deaths averted
+
+Also save a machine-readable assumptions_manifest.csv containing:
+
+- configuration values;
+- source files and versions;
+- proxy-country decisions;
+- trend method;
+- fiscal method;
+- LSS method;
+- exact SSaSS relative risks used;
+- whether direct RRs or the SBP pathway were used;
+- git commit identifier.
+
+This will make changes explainable in the report and prevent salteff from becoming an opaque scalar.
+
+
+10. RECOMMENDED IMPLEMENTATION ORDER
+
+1. Freeze and test the current outputs.
+2. Centralize paths, years, countries, and scenario controls in 00_run_model.R.
+3. Move all input construction into 02–03; make 07 a runner.
+4. Remove media, disable LSS in the full package, and activate the provisional fiscal effect.
+5. Load revised adult public-procurement shares.
+6. Add time-varying Euromonitor packaged-food shares.
+7. Implement LSS scenarios 4 and 5 with household uptake, clinical exclusions, and direct SSaSS trial effects.
+8. Add the elasticity-based fiscal sensitivity.
+9. Run regression, face-validity, and external benchmark checks.
+
+The main blocking inputs are the revised adult public-procurement shares, Euromonitor aggregation weights, household-size/adoption assumptions, and the final decision on which SSaSS outcome mapping will be used in the production model. The code should expose these as explicit inputs rather than silently substituting ad hoc values.

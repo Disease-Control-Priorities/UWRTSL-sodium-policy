@@ -61,6 +61,14 @@ run_CF_trend_80   <- TRUE
 
 run_CF_trend_ihme  <- FALSE
 
+# Euromonitor packaged-food consumption trend (Task 4). Applied in
+# 07_run_interventions.R as a change in source COMPOSITION (packaged share
+# grows, other sources renormalise; total intake unchanged). Input is built in
+# 03_clean_inputs.R.
+run_packaged_trend        <- TRUE
+PACKAGED_TREND_METHOD     <- "euromonitor_prediction_apc"  # median APC 2025-2030
+PACKAGED_TREND_AFTER_2030 <- "hold_constant"               # primary analysis
+
 # Remove unnecessary dx
 
 dx_include <- c("All causes",

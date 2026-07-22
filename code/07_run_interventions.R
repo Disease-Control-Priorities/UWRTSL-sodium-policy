@@ -56,7 +56,18 @@ library(dplyr)
 #   - a character vector:    c("fopl", "salt_targets", "fiscal")
 #   - the keyword "all":     every defined intervention
 #       (public_procurement, media_campaign, fopl, salt_targets, fiscal, lss)
-selected_interventions <- "all"
+# NOTE: media_campaign (behaviour change / mass media) is intentionally EXCLUDED
+# from all reported/production scenarios (July 14 decision). The machinery is
+# RETAINED in intervention_registry / intervention_effects (EFF_MEDIA) so it can
+# be re-enabled later; it is simply not listed here, and Task 3g keeps it (and
+# any placeholder) out of full_package.
+selected_interventions <- c(
+  "public_procurement",
+  "fopl",
+  "salt_targets",
+  "fiscal",
+  "lss"                # LSS variants (scenarios 2/4/5) are expanded in build_scenario_configs (Task 3)
+)
 
 # How to turn the selection into scenarios:
 #   "individual" = one scenario per selected intervention   (+ baseline)
@@ -64,16 +75,42 @@ selected_interventions <- "all"
 #   "both"       = individual scenarios AND a combined package (+ baseline)
 scenario_mode <- "both"
 
-# Should placeholder interventions (e.g. LSS, whose effect size is not yet
-# finalised) be folded into the combined 'full_package' scenario? Default FALSE
-# reproduces the documented package (public + media + fopl + salt_targets +
-# fiscal); LSS still runs as its own individual scenario. Set TRUE to include
-# placeholders in the package once their effect sizes are confirmed.
-include_placeholders_in_package <- TRUE
+# Should placeholder interventions (e.g. LSS, whose subgroup + trial-RR
+# implementation is not yet validation-hardened) be folded into the combined
+# 'full_package' scenario? FALSE (Task 3g) keeps LSS (placeholder = TRUE) OUT of
+# full_package: the LSS scenarios 2/4/5 run SEPARATELY until the subgroup work
+# has passed validation. The documented package is then public_procurement +
+# fopl + salt_targets + fiscal (media is excluded per Task 1). Set TRUE only once
+# LSS is ready to compose inside a package without the trial-RR/sodium->SBP
+# composition caveat (see calculate_sodium_impact_etihad).
+include_placeholders_in_package <- FALSE
 
 # Scale-up window (first year of scale-up -> year of full implementation).
 SCALEUP_YEAR1 <- 2026
 SCALEUP_YEAR2 <- 2030
+
+# LSS coverage toggles (Task 3e; RTSL to confirm). Scenario 2 (whole-population)
+# coverage is manually adjustable per the meeting notes; the HTN variants reuse
+# HEARTS coverage. These feed the three LSS variants built in
+# build_scenario_configs() and are echoed to the run log with the scenario
+# summary below. They are placeholders pending RTSL / HEARTS-linked inputs.
+LSS_COVERAGE_ALL  <- 0.50   # whole-population uptake for scenario 2 (placeholder)
+HTN_DIAGNOSED_COV <- 0.33   # HEARTS diagnosed coverage (placeholder)
+HTN_TREATED_COV   <- 0.25   # treated should be <= diagnosed; refine from HTN inputs
+
+# Task 5: this model is ADULTS-ONLY, but the documented public food-procurement
+# share (0.05 flat, in build_sodium_source_shares) assumed school coverage.
+# With ADULT_POPULATION_ONLY = TRUE the run FAILS LOUDLY (guard after
+# source_shares is loaded) rather than silently using the stale school-inclusive
+# value. Set FALSE ONLY for an explicitly-caveated provisional run until RTSL
+# delivers the adults-only per-country shares.
+# >>> TEMPORARY / PROVISIONAL (approved 2026-07-22 for the July-23 status run):
+# FALSE so the run proceeds on the stale 5% school-inclusive share WITH a loud
+# caveat printed to every run log. REVERT TO TRUE as soon as RTSL delivers the
+# adults-only per-country public shares (insert them in
+# build_sodium_source_shares()). Until then, public_procurement & full_package
+# results are PROVISIONAL. <<<
+ADULT_POPULATION_ONLY <- FALSE
 
 ###############################################################################
 # SECTION 1: GBD Relative Risks Setup                       (unchanged from 06)----
@@ -212,7 +249,16 @@ EFF_PROCUREMENT_PUBLIC   <- 0.20   # Public food procurement & service -> 'publi
 EFF_MEDIA                <- 0.010  # Behaviour change / media campaigns -> 'discretionary' + 'packaged' (1.0%)
 EFF_FOPL_PACKAGED        <- 0.138  # Front-of-pack labelling (FOPL) -> 'packaged' (13.8%)
 EFF_SALTTARGETS_PACKAGED <- 0.20   # Salt targets (reformulation) -> 'packaged' (20%; conservative floor 15% for sensitivity)
-EFF_FISCAL_PACKAGED      <- 0   # Fiscal policy / salt tax -> 'packaged' (10%)
+# Fiscal policy / salt tax -> 'packaged'. MVP: provisional fixed base-case
+# effect on the TAXED portion of packaged sodium (Green-et-al elasticity model
+# is long-term scope). Both factors kept configurable here and echoed to the
+# run log after structural validation (never a buried guessed constant).
+FISCAL_EFFECT_ON_TAXED_PACKAGED <- 0.10  # provisional; RTSL to confirm
+TAXABLE_PACKAGED_SHARE          <- 1.00  # fraction of packaged sodium in taxed
+                                         # nutrient-profile categories.
+                                         # 1.00 = "all packaged taxed" -- likely
+                                         # too high; flagged as an explicit assumption.
+EFF_FISCAL_PACKAGED <- FISCAL_EFFECT_ON_TAXED_PACKAGED * TAXABLE_PACKAGED_SHARE
 EFF_LSS_DISCRETIONARY    <- 0.15   # Low-sodium salt substitutes (LSS) -> 'discretionary'
 # SSaSS-DERIVED (Neal et al., NEJM 2021;385:1067-77).
 # Trial delivered a net -350 mg/day sodium (-15.2 mmol)
@@ -449,12 +495,36 @@ build_scenario_configs <- function(selected_interventions,
   # Individual scenarios.
   if (scenario_mode %in% c("individual", "both")) {
     for (nm in selected) {
-      configs[[nm]] <- list(
-        interventions = nm,
-        saltyear1     = saltyear1,
-        saltyear2     = saltyear2,
-        label         = registry[intervention == nm, label]
-      )
+      if (nm == "lss") {
+        # Task 3a: emit THREE explicit LSS variants (scenarios 2/4/5) instead of
+        # a bare 'lss'. Each carries its reach + coverage + method (SSaSS
+        # trial-RR) so the reach travels with the scenario (fixes the
+        # combined-package bug) and saltyear1/saltyear2 like the other configs.
+        lss_variants <- list(
+          lss_s2 = list(interventions = "lss", lss_reach = "all",
+                        lss_coverage = LSS_COVERAGE_ALL,  lss_method = "trial_rr",
+                        label = "LSS scenario 2 (whole-population discretionary)"),
+          lss_s4 = list(interventions = "lss", lss_reach = "htn_diagnosed",
+                        lss_coverage = HTN_DIAGNOSED_COV, lss_method = "trial_rr",
+                        label = "LSS scenario 4 (diagnosed hypertension)"),
+          lss_s5 = list(interventions = "lss", lss_reach = "htn_treated",
+                        lss_coverage = HTN_TREATED_COV,   lss_method = "trial_rr",
+                        label = "LSS scenario 5 (treated hypertension)")
+        )
+        for (vnm in names(lss_variants)) {
+          v <- lss_variants[[vnm]]
+          v$saltyear1 <- saltyear1
+          v$saltyear2 <- saltyear2
+          configs[[vnm]] <- v
+        }
+      } else {
+        configs[[nm]] <- list(
+          interventions = nm,
+          saltyear1     = saltyear1,
+          saltyear2     = saltyear2,
+          label         = registry[intervention == nm, label]
+        )
+      }
     }
   }
   
@@ -483,6 +553,40 @@ build_scenario_configs <- function(selected_interventions,
 # --- Build / write / load source shares (mirrors prepare_sodium_data) --------
 build_sodium_source_shares(wd_data, write = TRUE)
 source_shares <- readRDS(paste0(wd_data, "sodium_source_shares.rds"))
+
+# --- Task 5: adults-only public-procurement guard (fail loudly on stale 5%) ---
+# The documented public food-procurement share is a flat 0.05 that ASSUMED
+# school coverage, but this model is adults-only. Refuse to run silently on that
+# stale value. This runs BEFORE the Task-4b trend (which would renormalise the
+# public share away from 0.05) and BEFORE the structural validation, so it sees
+# the value exactly as build_sodium_source_shares() produced it.
+# ACTION FOR RTSL: replace the `public` column per country in
+# build_sodium_source_shares() with the adults-only shares (row renormalisation
+# there rebalances the other sources), AND update the Viet Nam sanity check
+# below that asserts public_procurement salteff = 0.20 x 0.05, or it will fail.
+# NB build_sodium_source_shares() renormalises each row to sum to 1, which
+# perturbs the flat 0.05 by up to ~5e-5 (e.g. Thailand's documented shares sum
+# to 0.999 -> public 0.050050; Nigeria/Cameroon sum to 1.001 -> 0.049950). The
+# stale signature is therefore "public ~= 0.05 for EVERY country" (not exactly
+# equal). A 1e-3 tolerance clears that jitter yet trips FALSE the moment RTSL's
+# materially different, per-country adults-only shares are inserted.
+.public_is_stale_5pct <- all(abs(source_shares$public - 0.05) < 1e-3)
+if (isTRUE(.public_is_stale_5pct)) {
+  if (isTRUE(ADULT_POPULATION_ONLY)) {
+    stop("ADULT_POPULATION_ONLY = TRUE but public procurement is still the ",
+         "school-inclusive 5% flat value. Insert the RTSL adults-only per-country ",
+         "shares in build_sodium_source_shares() before running.")
+  } else {
+    cat("\n############################################################\n")
+    cat("## PROVISIONAL RUN CAVEAT (ADULT_POPULATION_ONLY = FALSE)\n")
+    cat("## Public food procurement uses the stale SCHOOL-INCLUSIVE 5%\n")
+    cat("## flat share, which overstates adults-only procurement reach.\n")
+    cat("## public_procurement (and full_package) results are PROVISIONAL\n")
+    cat("## pending RTSL's adults-only per-country shares.\n")
+    cat("############################################################\n")
+  }
+}
+rm(.public_is_stale_5pct)
 
 # --- Build scenario_configs from the user controls ---------------------------
 scenario_configs <- build_scenario_configs(
@@ -524,6 +628,87 @@ if (abs(.chk_pub - 0.20 * 0.05) > 1e-6) {
 cat(sprintf("\nStructural validation OK. Sanity check: public_procurement salteff (Viet Nam) = %.4f (= 0.20 x 0.05)\n",
             .chk_pub))
 rm(.chk_sums, .bad_src, .chk_pub)
+
+# Fiscal MVP trace: echo the provisional fiscal effect to the run log so the
+# assumption is never buried (Task 2).
+cat(sprintf(
+  "\nFiscal MVP: EFF_FISCAL_PACKAGED = %.4f (= %.2f effect x %.2f taxable share)\n",
+  EFF_FISCAL_PACKAGED, FISCAL_EFFECT_ON_TAXED_PACKAGED, TAXABLE_PACKAGED_SHARE
+))
+
+# --- Task 4b: apply the Euromonitor packaged-food trend as a change in SOURCE
+# COMPOSITION -----------------------------------------------------------------
+# Packaged consumption is no longer assumed constant. When run_packaged_trend is
+# TRUE, grow each country's PACKAGED share by the Euromonitor median-APC trend
+# and renormalise the other sources so shares still sum to 1. Total sodium
+# intake is NOT changed -- this is a reweighting of WHERE sodium comes from, not
+# intake growth.
+#
+# MVP method (chosen 2026-07-22; the fully year-indexed share was deferred as it
+# would make salteff year-varying through compute_total_efficacy()): apply the
+# 2030 END-STATE packaged share as a single representative value for all years.
+#   I(2030) = (1 + g)^(2030 - 2025); held flat after 2030 (PACKAGED_TREND_AFTER_2030).
+# This keeps salteff a scalar. It slightly overstates the packaged weight in
+# 2026-2029, but the scale-up ramp makes early-year reductions small.
+#
+# Placement: AFTER the structural validation / Viet Nam sanity check (which
+# require the documented un-trended 0.05 public share) and BEFORE the parallel
+# run (so workers receive the trended shares via clusterExport). The on-disk
+# sodium_source_shares.rds is left as the documented builder output; the trend
+# is applied in-memory only.
+if (isTRUE(get0("run_packaged_trend", ifnotfound = FALSE))) {
+  .trend_file <- paste0(wd_data, "packaged_food_trends.rds")
+  if (!file.exists(.trend_file)) {
+    stop("run_packaged_trend = TRUE but ", .trend_file,
+         " is missing -- run 03_clean_inputs.R first.")
+  }
+  packaged_trends <- readRDS(.trend_file)
+  # geography -> model location (name_map from 05; only "Vietnam" -> "Viet Nam").
+  packaged_trends[, location := fcoalesce(name_map[geography], geography)]
+
+  .after2030 <- get0("PACKAGED_TREND_AFTER_2030", ifnotfound = "hold_constant")
+  .nyr       <- 2030 - 2025
+  packaged_trends[, I2030 := (1 + g)^.nyr]  # 2030 end-state intensification factor
+
+  source_shares_pretrend <- copy(source_shares)      # for logging only
+
+  # Attach I (1 = no trend for any country absent from Euromonitor, incl. 'default').
+  source_shares[, I := 1.0]
+  source_shares[packaged_trends, on = "location", I := i.I2030]
+  source_shares[is.na(I), I := 1.0]
+
+  # Grow packaged, then renormalise ALL five sources to sum to 1.
+  source_shares[, pkg_raw := packaged * I]
+  source_shares[, denom   := pkg_raw + discretionary + restaurant + public + inherent]
+  source_shares[, `:=`(
+    packaged      = pkg_raw / denom,
+    discretionary = discretionary / denom,
+    restaurant    = restaurant    / denom,
+    public        = public        / denom,
+    inherent      = inherent      / denom
+  )]
+  source_shares[, c("I", "pkg_raw", "denom") := NULL]
+
+  # Re-assert shares still sum to 1 after retrending.
+  .chk2 <- source_shares[, rowSums(.SD), .SDcols = SODIUM_SOURCES]
+  if (any(abs(.chk2 - 1) > 1e-6)) {
+    stop("Post-trend source shares do not sum to 1.0 for: ",
+         paste(source_shares$location[abs(.chk2 - 1) > 1e-6], collapse = ", "))
+  }
+
+  cat(sprintf("\nTask 4b: packaged-food trend APPLIED (method = %s, after-2030 = %s).\n",
+              get0("PACKAGED_TREND_METHOD", ifnotfound = "euromonitor_prediction_apc"),
+              .after2030))
+  cat("  packaged share (documented -> 2030 end-state) by country:\n")
+  .chg <- merge(source_shares_pretrend[, .(location, pkg_pre = round(packaged, 4))],
+                source_shares[,          .(location, pkg_post = round(packaged, 4))],
+                by = "location")
+  .chg[, delta := round(pkg_post - pkg_pre, 4)]
+  print(.chg[order(-pkg_post)])
+  rm(source_shares_pretrend, .chk2, .chg, .trend_file, .after2030, .nyr)
+} else {
+  cat("\nTask 4b: run_packaged_trend = FALSE; packaged shares held at documented static values.\n")
+}
 
 # --- Scenario summary + illustrative per-country efficacies -------------------
 cat("\nDefined scenarios and their interventions:\n")
@@ -825,18 +1010,31 @@ calculate_sodium_impact_etihad <- function(
     dt_baseline[, salt_target := pmax(0, salt - salteff)]
   }
   
-  # --- LSS hypertensive-targeting (inline, hard-coded) -----------------------
-  # Low-sodium salt substitutes are modelled as reaching ONLY the hypertensive
-  # subpopulation (SSaSS enrolled prior-stroke or >=60y with SBP >=140/>=160).
-  # For the LSS scenario, zero out the reduction in normotensive BP bins so the
-  # sodium reduction applies only to bins with SBP >= 140 mmHg. Detection is by
-  # the LSS-only salteff signature: LSS is the sole intervention whose effect
-  # touches 'discretionary' and, run individually, yields the LSS efficacy.
-  # (attr 'lss_only' is set by run_multiple_scenarios when the scenario's sole
-  #  intervention is 'lss'.)
-  if (isTRUE(attr(salteff, "lss_only"))) {
-    hypertensive_bins <- c("140-149", "150-159", "160-169", "170-179", "180+")
-    dt_baseline[!(bp_cat %in% hypertensive_bins), salt_target := 0]
+  # --- LSS reach + coverage (Task 3d; replaces the old binary 'lss_only') -----
+  # Reach/coverage/method now travel WITH the scenario config (attributes on
+  # salteff, set in project.all), so the restriction fires INSIDE a package too
+  # -- fixing the old combined-package bug where LSS silently reverted to
+  # whole-population behaviour whenever it was not the sole intervention.
+  #   lss_reach: "none" | "all" | "htn_diagnosed" | "htn_treated"
+  # BP >= 140 is an MVP PROXY for diagnosed/treated hypertension, pending
+  # HEARTS-linked eligibility (long-term). This salt_target adjustment feeds the
+  # sodium->SBP channel; the trial-RR pathway (below) derives its own 'reached'
+  # fraction from the same reach + coverage.
+  lss_reach    <- attr(salteff, "lss_reach")
+  lss_coverage <- attr(salteff, "lss_coverage")
+  lss_method   <- attr(salteff, "lss_method")
+  hypertensive_bins <- c("140-149", "150-159", "160-169", "170-179", "180+")
+  if (!is.null(lss_reach) && lss_reach != "none") {
+    if (lss_reach == "all") {
+      dt_baseline[, salt_target := salt_target * lss_coverage]
+    }
+    if (lss_reach %in% c("htn_diagnosed", "htn_treated")) {
+      dt_baseline[!(bp_cat %in% hypertensive_bins), salt_target := 0]
+      dt_baseline[ (bp_cat %in% hypertensive_bins),
+                   salt_target := salt_target * lss_coverage]
+      cat("  - LSS reach:", lss_reach,
+          "(BP>=140 proxy for diagnosed/treated; coverage =", lss_coverage, ")\n")
+    }
   }
   
   # Enforce minimum intake of 2 g/day
@@ -849,7 +1047,48 @@ calculate_sodium_impact_etihad <- function(
   dt_baseline[year > saltyear2, salt_reduction := salt_target]
   dt_baseline[year < saltyear1, salt_reduction := 0]
   dt_baseline[is.na(salt_reduction) | salt_reduction < 0, salt_reduction := 0]
-  
+
+  # ---- LSS trial-RR pathway (potassium-inclusive; SSaSS approach B) ----------
+  # Task 3f. When lss_method == "trial_rr", the LSS primary effect on STROKE is
+  # taken from the SSaSS trial (Neal et al., NEJM 2021;385:1067-77) rather than
+  # the sodium->SBP channel, so the potassium benefit is captured. Mapped onto
+  # this model's (incidence IR, case-fatality CF) structure with NO double-count:
+  #   - incidence multiplier = nonfatal-stroke RR 0.90        (-> istroke, hstroke IR)
+  #   - case-fatality mult.   = fatal/nonfatal 0.77/0.90 = 0.856 (-> istroke, hstroke CF)
+  # The total-stroke RR 0.86 is NOT applied separately (0.90 x 0.856 reproduces
+  # the combined stroke effect). Non-stroke causes get no trial effect. The
+  # eff_ir_trial / eff_cf_trial columns are consumed in the Step 8-9 branch.
+  apply_trial_rr <- !is.null(lss_method) && lss_method == "trial_rr" &&
+                    !is.null(lss_reach)  && lss_reach != "none"
+
+  if (apply_trial_rr) {
+    RR_STROKE_INCIDENCE <- 0.90            # nonfatal-stroke RR -> incidence
+    RR_STROKE_CF        <- 0.77 / 0.90     # conditional CF effect (= 0.8556)
+    stroke_causes       <- c("istroke", "hstroke")
+
+    # Reached fraction, ramped identically to the Step-4 sodium scale-up so LSS
+    # shares the 2026->2030 window.
+    dt_baseline[, ramp := fifelse(
+      year < saltyear1, 0,
+      fifelse(year > saltyear2, 1,
+              (year - saltyear1 + 1) / (saltyear2 - saltyear1 + 1)))]
+
+    dt_baseline[, reached := 0]
+    if (lss_reach == "all") {
+      dt_baseline[, reached := lss_coverage * ramp]
+    } else {  # htn_diagnosed / htn_treated: eligible (raised-BP) bins only
+      dt_baseline[bp_cat %in% hypertensive_bins, reached := lss_coverage * ramp]
+    }
+
+    # Blend each RR toward 1 by the reached fraction: eff RR = 1 - reached*(1-RR).
+    dt_baseline[, eff_ir_trial := 1]
+    dt_baseline[, eff_cf_trial := 1]
+    dt_baseline[cause %in% stroke_causes,
+                eff_ir_trial := 1 - reached * (1 - RR_STROKE_INCIDENCE)]
+    dt_baseline[cause %in% stroke_causes,
+                eff_cf_trial := 1 - reached * (1 - RR_STROKE_CF)]
+  }
+
   # Step 5: Filippini dose-response -> SBP reduction
   dt_baseline[, sbp_reduction := ((2.8 * raisedBP) + ((1 - raisedBP) * 1.0)) * salt_reduction]
   
@@ -878,15 +1117,65 @@ calculate_sodium_impact_etihad <- function(
   dt_baseline[, etihad_effect_sodium := etihad_effect * 0.1 * sbp_reduction]
   dt_baseline[, IR_bin_new           := IR_bin * (1 - etihad_effect_sodium)]
   
-  # Step 8: Population-weighted average incidence
-  dt_baseline[, IR_new := sum(IR_bin_new * prob),
-              by = .(age, sex, location, cause, year)]
-  dt_baseline[year < saltyear1, IR_new := IR]
-  dt_baseline[, eff_ir := IR_new / IR]
-  
-  # Step 9: Case fatality - no secondary effect from sodium reduction
-  dt_baseline[, CF_new := CF]
-  dt_baseline[, eff_cf := 1]
+  # Step 8-9: results assembly. Exactly ONE pathway sets eff_ir/eff_cf for stroke
+  # (Task 3f guardrail: NEVER trial-RR AND sodium->SBP together).
+  if (apply_trial_rr) {
+    cat("  - LSS trial-RR ACTIVE (SSaSS approach B): stroke eff_ir/eff_cf set",
+        "from trial RRs; sodium->SBP incidence cut NOT applied to stroke",
+        "(single pathway for stroke).\n")
+
+    # Incidence: apply the trial RR at the bin level, then express the effect
+    # RELATIVE TO THE BIN-AGGREGATED BASELINE (not raw IR), DISCARDING the
+    # SBP-mediated cut. Normalising by sum(IR_bin*prob) cancels a PRE-EXISTING
+    # hstroke decomposition quirk: calculate_baseline_incidence_gbd() sets
+    # RRi_HSTROKE := RRi_ISTROKE for the bin split but uses the (steeper) GBD
+    # hstroke RR for alpha, so sum(IR_bin*prob) != IR for hstroke and a raw-IR
+    # normalisation would inflate the hstroke effect. With this normalisation the
+    # trial effect is a clean 1 - reached*(1-RR): for reach="all", eff_ir
+    # collapses to the trial multiplier for BOTH stroke causes (istroke was
+    # already consistent; hstroke is now too). NB the sodium->SBP path still uses
+    # raw-IR normalisation and so still carries that quirk -- flagged for the
+    # long-term disease-model fix, out of scope for this MVP.
+    dt_baseline[, IR_base_agg := sum(IR_bin * prob),
+                by = .(age, sex, location, cause, year)]
+    dt_baseline[, IR_agg_new  := sum(IR_bin * eff_ir_trial * prob),
+                by = .(age, sex, location, cause, year)]
+    dt_baseline[, eff_ir := IR_agg_new / IR_base_agg]
+    dt_baseline[is.na(eff_ir) | IR_base_agg == 0, eff_ir := 1]
+    dt_baseline[year < saltyear1, eff_ir := 1]
+    dt_baseline[, IR_new := IR * eff_ir]
+
+    # Case fatality: conditional trial effect on stroke CF (was a no-op).
+    # Normalise by the bin-aggregated baseline (SAME as incidence above) so the
+    # prob-weighted multiplier is exact: for reach="all", eff_cf collapses to the
+    # trial CF multiplier for both stroke causes, and non-stroke eff_cf is exactly
+    # 1 (no floating-point drift from sum(prob) != 1 exactly).
+    dt_baseline[, CF_base_agg := sum(CF * prob),
+                by = .(age, sex, location, cause, year)]
+    dt_baseline[, CF_agg_new  := sum(CF * eff_cf_trial * prob),
+                by = .(age, sex, location, cause, year)]
+    dt_baseline[, eff_cf := CF_agg_new / CF_base_agg]
+    dt_baseline[is.na(eff_cf) | CF_base_agg == 0, eff_cf := 1]
+    dt_baseline[year < saltyear1, eff_cf := 1]
+    dt_baseline[, CF_new := CF * eff_cf]
+  } else {
+    # Step 8: Population-weighted average incidence (sodium->SBP channel)
+    dt_baseline[, IR_new := sum(IR_bin_new * prob),
+                by = .(age, sex, location, cause, year)]
+    dt_baseline[year < saltyear1, IR_new := IR]
+    dt_baseline[, eff_ir := IR_new / IR]
+
+    # Step 9: Case fatality - no secondary effect from the sodium->SBP channel.
+    # SENSITIVITY HOOK (Task 3h): an LSS scenario with lss_method == "sodium_sbp"
+    # lands here as a DOCUMENTED sensitivity path (not wired into the reported
+    # 7/23 scenarios, which all use trial_rr). It currently reconstructs the SBP
+    # reduction from the sodium reduction via Filippini (Step 5); a fuller LSS
+    # sensitivity would instead inject the OBSERVED SSaSS -3.34 mmHg SBP effect
+    # directly (the +803 mg/day potassium rise drove much of it) rather than the
+    # sodium-only reconstruction. Left as a hook for the long-term refactor.
+    dt_baseline[, CF_new := CF]
+    dt_baseline[, eff_cf := 1]
+  }
   
   # Step 10: Collapse BP-bin dimension
   dt_final <- unique(dt_baseline[, .(
@@ -932,23 +1221,34 @@ b_rates[IR < 0,  IR := 0]
 #'         eff_ir, eff_cf.
 project.all <- function(
     Country,
-    saltmet   = "percent",
-    salteff   = 0.0,
-    saltyear1 = 2026,
-    saltyear2 = 2030,
-    lss_only  = FALSE
+    saltmet      = "percent",
+    salteff      = 0.0,
+    saltyear1    = 2026,
+    saltyear2    = 2030,
+    lss_reach    = "none",         # "none" | "all" | "htn_diagnosed" | "htn_treated"
+    lss_coverage = 1.0,            # fraction of the reached population using LSS
+    lss_method   = "sodium_sbp"    # "sodium_sbp" | "trial_rr" (SSaSS)
 ) {
   cat("\n========================================\n")
   cat("STARTING PROJECTION FOR:", Country, "\n")
   cat("salteff  =", salteff, " | method:", saltmet,
-      if (isTRUE(lss_only)) " | LSS restricted to hypertensive bins" else "", "\n")
+      if (!identical(lss_reach, "none"))
+        paste0(" | LSS reach: ", lss_reach, " (", lss_method,
+               ", coverage ", lss_coverage, ")")
+      else "", "\n")
   cat("scale-up:", saltyear1, "-", saltyear2, "\n")
   cat("========================================\n\n")
-  
-  # Carry the LSS-targeting flag on salteff so calculate_sodium_impact_etihad()
-  # can restrict the reduction to raised-BP bins. as.numeric() upstream strips
-  # attributes, so the flag is (re)attached here just before use.
-  attr(salteff, "lss_only") <- isTRUE(lss_only)
+
+  # Carry the LSS reach/coverage/method on salteff so
+  # calculate_sodium_impact_etihad() can (a) restrict the sodium->SBP reduction
+  # to the reached population and (b) select the trial-RR vs sodium->SBP pathway.
+  # as.numeric() upstream strips attributes, so they are (re)attached here just
+  # before use (mirrors the old lss_only flag).
+  # NB: the trial-RR effect is gated behind salteff > 0 below; for every priority
+  # country LSS has discretionary share > 0, so salteff > 0 and the gate holds.
+  attr(salteff, "lss_reach")    <- lss_reach
+  attr(salteff, "lss_coverage") <- lss_coverage
+  attr(salteff, "lss_method")   <- lss_method
   
   #--------------------------------------------------------------------
   # Preliminaries: subset and expand input data
@@ -1149,19 +1449,25 @@ run_multiple_scenarios <- function(
     s_saltyear1     <- if (!is.null(cfg$saltyear1))     cfg$saltyear1     else saltyear1
     s_saltyear2     <- if (!is.null(cfg$saltyear2))     cfg$saltyear2     else saltyear2
     s_label         <- if (!is.null(cfg$label))         cfg$label         else scenario_name
-    
+    # LSS attributes travel WITH the scenario config (Task 3b). Defaults make
+    # non-LSS scenarios a no-op: reach "none" -> no restriction; method
+    # "sodium_sbp" -> no trial-RR.
+    s_lss_reach     <- if (!is.null(cfg$lss_reach))     cfg$lss_reach     else "none"
+    s_lss_coverage  <- if (!is.null(cfg$lss_coverage))  cfg$lss_coverage  else 1.0
+    s_lss_method    <- if (!is.null(cfg$lss_method))    cfg$lss_method    else "sodium_sbp"
+
     # Resolve the country-specific total-intake reduction fraction from the
     # per-source shares and this scenario's interventions.
     s_salteff <- compute_total_efficacy(s_interventions, Country,
                                         source_shares, intervention_effects)
     s_decomp  <- attr(s_salteff, "decomposition")
     
-    # LSS is modelled as reaching only the hypertensive subpopulation. Flag the
-    # scenario when 'lss' is the SOLE intervention so calculate_sodium_impact_
-    # etihad() restricts the reduction to raised-BP bins. (In a mixed package
-    # LSS is not isolated, so no restriction is applied - see caveat in docs.)
-    s_lss_only <- identical(s_interventions, "lss")
-    
+    # (Task 3b) The old `s_lss_only <- identical(s_interventions, "lss")`
+    # detection is REMOVED. Reach/coverage/method now come from the scenario
+    # config, so the LSS restriction travels into packages too -- fixing the
+    # combined-package bug where LSS reverted to whole-population reach whenever
+    # it was not the sole intervention.
+
     cat("\n##########################################\n")
     cat("SCENARIO     :", scenario_name, "\n")
     cat("Label        :", s_label, "\n")
@@ -1175,12 +1481,14 @@ run_multiple_scenarios <- function(
     cat("##########################################\n")
     
     results[[scenario_name]] <- project.all(
-      Country   = Country,
-      saltmet   = s_saltmet,
-      salteff   = as.numeric(s_salteff),
-      saltyear1 = s_saltyear1,
-      saltyear2 = s_saltyear2,
-      lss_only  = s_lss_only
+      Country      = Country,
+      saltmet      = s_saltmet,
+      salteff      = as.numeric(s_salteff),
+      saltyear1    = s_saltyear1,
+      saltyear2    = s_saltyear2,
+      lss_reach    = s_lss_reach,
+      lss_coverage = s_lss_coverage,
+      lss_method   = s_lss_method
     )
   }
   

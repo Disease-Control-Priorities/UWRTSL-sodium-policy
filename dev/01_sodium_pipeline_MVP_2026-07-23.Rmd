@@ -1,0 +1,398 @@
+---
+title: "Sodium Policy Pipeline — Minimum-Viable Update for 2026-07-23"
+subtitle: "Prompt-ready task list for Claude Code (short-term edits only)"
+author: "UW / RTSL CVH Modeling"
+date: "2026-07-22"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+# How to use this file
+
+This is the **minimum-viable (MVP)** plan: the smallest set of edits that gets a
+defensible full run for the **July 23** status update, without a structural
+refactor. Paste sections into Claude Code one task at a time. Every code block is
+`eval=FALSE` — they are *edit instructions*, not runnable chunks.
+
+**Scope discipline.** MVP keeps the current file layout and the downstream disease
+model untouched. It changes only: (1) which interventions run, (2) the fiscal
+effect size, (3) LSS scenarios 2/4/5 with correct eligibility and no combined-
+package bug, (4) a first-pass Euromonitor packaged trend behind a toggle, and
+(5) making public procurement fail loudly until RTSL supplies the adult-only value.
+The full refactor (config-driven paths, moving logic into `03`/`04`, testthat, audit
+trail) is deferred to `02_sodium_pipeline_LONGTERM_refactor.Rmd`.
+
+**Files referenced** (paths as in the current repo):
+
+- `00_run_model.R` — orchestration + user flags
+- `02_load_inputs.R` — builds `sodium_policy_scenarios.rds`
+- `03_clean_inputs.R` — currently empty
+- `04_define_intervention.R` — sodium→BP→incidence engine + state transitions
+- `05_build_baseline.R` — name map, mortality/CF trends, `repYear`
+- `07_run_interventions.R` — source shares, `intervention_effects`, `compute_total_efficacy()`, scenario builder, `calculate_sodium_impact_etihad()`, `project.all()`, parallel loop
+
+**Decisions locked by the 7/14 email (supersede older notes):** exclude media;
+include fiscal; LSS scenarios 2, 4, 5 (2 = whole-population discretionary with a
+coverage toggle; 4 = diagnosed HTN; 5 = treated HTN); investigate household uptake;
+revise the 5% public-procurement share to adults-only; incorporate Euromonitor
+packaged trend; confirm a configurable ramp-up.
+
+---
+
+# Task 0 — Freeze current outputs first (safety net)
+
+Before any edit, capture a baseline so we can prove what changed. This is the only
+"do this first" item.
+
+```r
+# In 07_run_interventions.R, at the very top of SECTION 12 (parallel execution),
+# save a legacy copy of results for two contrasting countries:
+#   - China    (high discretionary sodium)
+#   - Viet Nam (high packaged sodium)
+# Run the pipeline UNCHANGED once, then copy the two .rds outputs to:
+#   output/out_model/legacy_static/model_output_interventions_<country>.rds
+# These become the regression reference. Do not overwrite them again.
+```
+
+---
+
+# Task 1 — Remove behaviour change / mass media from reported scenarios
+
+Media stays *defined* (do not delete the machinery — it may return), but must not
+appear in any reported scenario or in `full_package`.
+
+**Where:** `07_run_interventions.R`, SECTION 0 user controls (~line 59).
+
+```r
+# BEFORE:
+selected_interventions <- "all"   # "all" pulls in media_campaign
+
+# AFTER: enumerate explicitly, omitting media_campaign.
+selected_interventions <- c(
+  "public_procurement",
+  "fopl",
+  "salt_targets",
+  "fiscal",
+  "lss"                # LSS variants are built in Task 3, not here
+)
+# Leave EFF_MEDIA and the media_campaign rows in intervention_effects /
+# intervention_registry intact. Add a one-line comment noting media is retained
+# in the registry but intentionally excluded from production scenarios.
+```
+
+---
+
+# Task 2 — Turn on fiscal policy (provisional fixed effect + guard)
+
+Fiscal is registered but is a no-op: `EFF_FISCAL_PACKAGED <- 0` (comment says 10%).
+For MVP, ship a **transparent fixed effect** applied only to the taxed share of
+packaged sodium. The elasticity model (Green et al.) is a **long-term sensitivity**,
+not MVP.
+
+**Where:** `07_run_interventions.R`, effect-size constants (~line 215).
+
+```r
+# BEFORE:
+EFF_FISCAL_PACKAGED <- 0   # Fiscal policy / salt tax -> 'packaged' (10%)
+
+# AFTER: provisional base-case effect on the TAXED portion of packaged sodium.
+FISCAL_EFFECT_ON_TAXED_PACKAGED <- 0.10  # provisional; RTSL to confirm
+TAXABLE_PACKAGED_SHARE          <- 1.00  # fraction of packaged sodium in taxed
+                                         # nutrient-profile categories.
+                                         # 1.00 = "all packaged taxed" (flag as
+                                         # an explicit, likely-too-high assumption)
+EFF_FISCAL_PACKAGED <- FISCAL_EFFECT_ON_TAXED_PACKAGED * TAXABLE_PACKAGED_SHARE
+```
+
+**Sanity check to add** near the structural validation block (~line 515), so the
+run is traceable:
+
+```r
+cat(sprintf(
+  "\nFiscal MVP: EFF_FISCAL_PACKAGED = %.4f (= %.2f effect x %.2f taxable share)\n",
+  EFF_FISCAL_PACKAGED, FISCAL_EFFECT_ON_TAXED_PACKAGED, TAXABLE_PACKAGED_SHARE
+))
+```
+
+No other change: the `fiscal -> packaged` row already exists in
+`intervention_effects`, so a non-zero constant flows through
+`compute_total_efficacy()` automatically.
+
+---
+
+# Task 3 — LSS scenarios 2/4/5 with correct eligibility and NO combined-package bug
+
+This is the most important correctness fix in the MVP. Three problems in the
+current code must be addressed together:
+
+1. **Combined-package bug.** The hypertensive restriction only fires when LSS is
+   the *sole* intervention: `s_lss_only <- identical(s_interventions, "lss")`
+   (~line 1163). Inside `full_package`, LSS silently reverts to whole-population
+   behaviour — wrong. The reach must travel with the LSS variant regardless of
+   what else is in the scenario.
+2. **Eligibility proxy.** The restriction uses `bp_cat >= 140` (~line 838), but
+   scenarios 4/5 are defined by **diagnosed** and **treated** hypertension, which
+   should come from the HEARTS/HTN coverage inputs — not a BP bin.
+3. **Missing scenario 2.** Whole-population discretionary replacement with a
+   coverage toggle does not exist yet.
+
+**Step 3a — Replace the boolean `lss_only` with a reach enum.** Thread a
+`lss_reach` field through the scenario config → `run_multiple_scenarios()` →
+`project.all()` → `calculate_sodium_impact_etihad()`.
+
+```r
+# In build_scenario_configs() (~line 413), STOP emitting a single "lss" scenario.
+# Instead emit three explicit LSS scenarios when "lss" is selected:
+
+lss_variants <- list(
+  lss_s2 = list(interventions = "lss", lss_reach = "all",
+                lss_coverage = LSS_COVERAGE_ALL,       # Task 3c
+                label = "LSS scenario 2 (whole-population discretionary)"),
+  lss_s4 = list(interventions = "lss", lss_reach = "htn_diagnosed",
+                lss_coverage = HTN_DIAGNOSED_COV,       # from HEARTS inputs
+                label = "LSS scenario 4 (diagnosed hypertension)"),
+  lss_s5 = list(interventions = "lss", lss_reach = "htn_treated",
+                lss_coverage = HTN_TREATED_COV,         # from HEARTS inputs
+                label = "LSS scenario 5 (treated hypertension)")
+)
+# Add each variant that carries saltyear1/saltyear2 like the other configs.
+# Do NOT add a bare "lss" scenario alongside these.
+```
+
+**Step 3b — Carry reach + coverage through the runner.** In
+`run_multiple_scenarios()` (~line 1144) read `cfg$lss_reach` and `cfg$lss_coverage`
+and pass them to `project.all()`. Delete the `identical(..., "lss")` detection.
+
+```r
+s_lss_reach    <- if (!is.null(cfg$lss_reach))    cfg$lss_reach    else "none"
+s_lss_coverage <- if (!is.null(cfg$lss_coverage)) cfg$lss_coverage else 1.0
+
+results[[scenario_name]] <- project.all(
+  Country      = Country,
+  saltmet      = s_saltmet,
+  salteff      = as.numeric(s_salteff),
+  saltyear1    = s_saltyear1,
+  saltyear2    = s_saltyear2,
+  lss_reach    = s_lss_reach,      # was: lss_only = s_lss_only
+  lss_coverage = s_lss_coverage
+)
+```
+
+**Step 3c — Apply reach + coverage in the impact function.** In
+`project.all()` (~line 933) accept `lss_reach`/`lss_coverage`, attach them to
+`salteff` (attributes survive the `as.numeric()` upstream only if re-attached
+here, exactly as the old `lss_only` flag was). In
+`calculate_sodium_impact_etihad()` replace the hard BP-bin zeroing (~837–840):
+
+```r
+# BEFORE (binary, sole-intervention only):
+if (isTRUE(attr(salteff, "lss_only"))) {
+  hypertensive_bins <- c("140-149","150-159","160-169","170-179","180+")
+  dt_baseline[!(bp_cat %in% hypertensive_bins), salt_target := 0]
+}
+
+# AFTER (reach enum + coverage; works inside packages too):
+lss_reach    <- attr(salteff, "lss_reach")
+lss_coverage <- attr(salteff, "lss_coverage")
+if (!is.null(lss_reach) && lss_reach != "none") {
+  # Scenario 2: whole population, scaled by coverage (household spillover
+  # investigated in the long-term plan; MVP applies flat coverage).
+  if (lss_reach == "all") {
+    dt_baseline[, salt_target := salt_target * lss_coverage]
+  }
+  # Scenarios 4/5: restrict to eligible HTN population.
+  # MVP interim: keep the >=140 BP-bin proxy but scale by the
+  # diagnosed/treated coverage passed in, and FLAG in the log that this is a
+  # proxy for diagnosed/treated status pending the HEARTS-linked eligibility
+  # (long-term Task).
+  if (lss_reach %in% c("htn_diagnosed", "htn_treated")) {
+    hypertensive_bins <- c("140-149","150-159","160-169","170-179","180+")
+    dt_baseline[!(bp_cat %in% hypertensive_bins), salt_target := 0]
+    dt_baseline[ (bp_cat %in% hypertensive_bins),
+                 salt_target := salt_target * lss_coverage]
+    cat("  - LSS reach:", lss_reach,
+        "(BP>=140 proxy; coverage =", lss_coverage, ")\n")
+  }
+}
+```
+
+**Step 3d — Coverage constants** at the top of `07` (SECTION 0):
+
+```r
+# LSS coverage toggles (RTSL to confirm). Scenario 2 coverage is manually
+# adjustable per the meeting notes; HTN variants reuse HEARTS ~33% coverage.
+LSS_COVERAGE_ALL  <- 0.50   # whole-population uptake for scenario 2 (placeholder)
+HTN_DIAGNOSED_COV <- 0.33   # HEARTS diagnosed coverage
+HTN_TREATED_COV   <- 0.33   # HEARTS treated coverage (refine from HTN inputs)
+```
+
+**Step 3e — Keep LSS out of `full_package` for now.** The 7/14 email says
+scenarios 4/5 are "fine for now" but household uptake is still being investigated,
+so LSS should not yet be blended into the reported package.
+
+```r
+# In 07 SECTION 0:
+include_placeholders_in_package <- FALSE   # keeps LSS (placeholder=TRUE) out
+# Verify intervention_registry still marks lss placeholder = TRUE.
+```
+
+**Note on potassium (MVP scope):** the MVP keeps the mechanistic sodium→SBP path
+for LSS (0.15 on discretionary) and does **not** yet apply SSaSS trial RRs.
+Applying the trial RRs correctly requires the double-counting and clinical-
+exclusion handling detailed in the long-term plan; doing it hastily would
+overstate benefit. Flag in the run log that MVP LSS is a **conservative lower
+bound** (no potassium channel), matching the existing code comment.
+
+---
+
+# Task 4 — Euromonitor packaged-food trend (first pass, behind a toggle)
+
+Stop assuming packaged consumption is constant. MVP wires a single, well-behaved
+trend behind a flag, using the **2025–2030 predicted APC** window (matches the
+policy period). Compound growth past 2030 is a long-term sensitivity only.
+
+**Step 4a — Ingest + collapse** in `03_clean_inputs.R` (currently empty — the
+natural home). Read the `Predictions (2025-2030)` sheet, map `geography` → model
+`location` via the `name_map` pattern from `05`, and collapse to ONE growth rate
+per country.
+
+```r
+library(readxl); library(data.table)
+
+eu <- as.data.table(read_excel(
+  paste0(wd_raw, "Euromonitor_trends_RTSL.xlsx"),
+  sheet = "Predictions (2025-2030)"
+))
+
+# CRITICAL: do not average all rows. The workbook mixes parent and child
+# categories (e.g. "Meals and Soups" contains "Soup"; "Dairy" contains
+# "Cheese"). Averaging both double-counts. MVP interim rule: median APC over a
+# hand-picked set of NON-OVERLAPPING, sodium-relevant leaf categories.
+sodium_leaf_categories <- c(
+  "Sauces, Dips and Condiments",
+  "Soup",
+  "Processed Meat and Seafood"   # confirm exact labels against the workbook
+  # ... add other non-overlapping leaves; exclude any parent of an included leaf
+)
+eu <- eu[series_category %in% sodium_leaf_categories]
+eu[, location := fcoalesce(name_map[geography], geography)]  # reuse name_map
+
+packaged_trends <- eu[, .(g = median(as.numeric(apc)) / 100), by = location]
+saveRDS(packaged_trends, paste0(wd_data, "packaged_food_trends.rds"))
+```
+
+**Step 4b — Apply as a change in source COMPOSITION, not automatic total-intake
+growth** (primary analysis). Convert the static packaged share into a year-varying
+share and renormalise the others.
+
+```r
+# In 07, after source_shares is loaded (~line 485), build a year-indexed share
+# table when the toggle is on. Index I(c,t) = (1+g_c)^(t-2025) for 2025<=t<=2030,
+# held flat after 2030 (primary). Then:
+#   w_packaged(c,t) = w_packaged(c,2025) * I(c,t)
+#   / [ w_packaged(c,2025)*I(c,t) + sum(non-packaged shares) ]
+# renormalising ALL sources to sum to 1 each year.
+# compute_total_efficacy() then reads the year-appropriate packaged share.
+# (MVP may apply the 2030 end-state share as a single representative value if a
+#  full year-indexed refactor of compute_total_efficacy is too large for 7/23 —
+#  document whichever is done.)
+```
+
+**Step 4c — Toggle** in `00_run_model.R`, mirroring the existing
+`run_bgmx_trend` / `run_CF_trend` flags:
+
+```r
+run_packaged_trend        <- TRUE
+PACKAGED_TREND_METHOD     <- "euromonitor_prediction_apc"  # 2025-2030
+PACKAGED_TREND_AFTER_2030 <- "hold_constant"               # primary analysis
+```
+
+---
+
+# Task 5 — Public procurement: fail loudly until RTSL delivers adults-only share
+
+The 5% share assumed school coverage; the model is adults-only. This is an RTSL
+due-out. MVP does NOT guess — it refuses to run silently with the stale value.
+
+**Where:** `build_sodium_source_shares()` in `07` (~line 305), and add a guard.
+
+```r
+# Add a top-of-file flag:
+ADULT_POPULATION_ONLY <- TRUE
+
+# After build_sodium_source_shares() (~line 485), guard against the stale 5%:
+if (isTRUE(ADULT_POPULATION_ONLY) &&
+    all(abs(source_shares$public - source_shares$public[1]) < 1e-9) &&
+    abs(source_shares$public[1] - 0.05) < 1e-6) {
+  stop("ADULT_POPULATION_ONLY = TRUE but public procurement is still the ",
+       "school-inclusive 5% flat value. Insert the RTSL adults-only per-country ",
+       "shares in build_sodium_source_shares() before running.")
+}
+```
+
+**When RTSL delivers the number:** update the `public` column per country; the
+row renormalisation at ~319–321 rebalances the others automatically. Also update
+the Viet Nam sanity check (~515–524) that currently asserts
+`public_procurement salteff = 0.20 x 0.05`, or it will fail.
+
+---
+
+# Task 6 — Confirm the ramp-up window (parameter, not code)
+
+Scale-up is already centralised and linear (`SCALEUP_YEAR1 <- 2026`,
+`SCALEUP_YEAR2 <- 2030`, threaded everywhere; linear ramp in
+`calculate_sodium_impact_etihad()` Step 4 ~846–850). No code change for MVP.
+
+Position for the meeting: confirm 2026→2030; effect sizes from studies with
+different observation periods are applied as **end-state at full scale-up, reached
+linearly** (the harmonisation the notes ask about). Ensure the Task-4 packaged
+trend and Task-3 LSS coverage ramp share this window.
+
+---
+
+# Task 7 — MVP acceptance checks before sharing results
+
+Minimal checks (full testthat suite is long-term). Run these and eyeball:
+
+```r
+# 1. Every country's source shares still sum to 1 (per year if Task 4b year-indexed).
+# 2. Fiscal salteff > 0 for at least one country when fiscal is selected.
+# 3. Media absent from names(scenario_configs).
+# 4. lss_s2/lss_s4/lss_s5 present; NO bare "lss" scenario; LSS absent from full_package.
+# 5. LSS reach applied identically whether LSS runs alone or (later) in a package
+#    — confirm the combined-package bug is gone by temporarily adding lss to a
+#    package and checking the BP-bin restriction still fires.
+# 6. Compare China + Viet Nam against Task-0 legacy_static outputs; the ONLY
+#    differences should trace to the toggles you enabled.
+# 7. validate_intervention_results() passes (no negatives / NAs / pop mismatch).
+```
+
+---
+
+# MVP implementation order (paste to Claude Code in this sequence)
+
+```r
+# 1. Task 0  — freeze legacy outputs (China, Viet Nam).
+# 2. Task 1  — remove media from selected_interventions.
+# 3. Task 2  — provisional fiscal fixed effect + sanity print.
+# 4. Task 5  — public-procurement guard (fail loudly).
+# 5. Task 3  — LSS reach enum, scenarios 2/4/5, combined-package bug fix, coverage.
+# 6. Task 4  — Euromonitor packaged trend behind run_packaged_trend toggle.
+# 7. Task 6  — confirm ramp window (no code).
+# 8. Task 7  — acceptance checks vs legacy_static.
+```
+
+# Blocking inputs to request from RTSL for 7/23
+
+Revised **adult-only public-procurement shares**; confirmation of the **fiscal
+fixed effect (10%) and taxable packaged share**; **scenario-2 coverage %** and the
+**HEARTS diagnosed/treated coverage** for scenarios 4/5; and the **Euromonitor leaf
+categories** to include (Matti offered to advise). Everything else can proceed with
+the placeholders above, clearly flagged in the run log.

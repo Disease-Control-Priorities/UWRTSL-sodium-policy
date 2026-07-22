@@ -192,7 +192,7 @@ EFF_PROCUREMENT_PUBLIC   <- 0.20   # Public food procurement & service -> 'publi
 EFF_MEDIA                <- 0.010  # Media campaigns -> 'discretionary' + 'packaged'
 EFF_FOPL_PACKAGED        <- 0.138  # Front-of-pack labelling -> 'packaged'
 EFF_SALTTARGETS_PACKAGED <- 0.20   # Salt targets (reformulation) -> 'packaged'
-EFF_FISCAL_PACKAGED      <- 0.0   # Fiscal policy (salt tax) -> 'packaged'
+EFF_FISCAL_PACKAGED      <- 0.1   # Fiscal policy (salt tax) -> 'packaged'
 EFF_LSS_DISCRETIONARY    <- 0.15   # Low-sodium salt substitutes -> 'discretionary'
 # SSaSS-derived (Neal et al., NEJM 2021;385:1067-77): a net -350 mg/day ITT
 # sodium reduction against a ~4.3 g/day baseline -> ~0.15 relative reduction of
