@@ -843,3 +843,262 @@ with trial-RR).
 
 **Start with Task 0 now. After each task, show the diff and wait for me to say
 "continue" before proceeding.**
+
+##########################################################3
+3##########################################################3
+
+# Claude Code prompt — Update the sodium-policy slide deck for the July 23 technical meeting (paste everything below)
+
+You are working in the existing UW / Resolve to Save Lives (RTSL) sodium-policy R
+repository. The **model code has just been updated** for the July 23 status run
+(the MVP changes: fiscal turned on, LSS scenarios 2/4/5 with the SSaSS trial-RR
+potassium-inclusive pathway, the Euromonitor packaged-food trend, and the
+adults-only public-procurement guard). Your job now is to **bring the presentation
+layer into line with those changes** so the deck we present on July 23 reflects the
+current model, not the stale May-28 framing.
+
+Two files carry the presentation layer:
+
+- `reports/report.RMD` — does ALL computation and, in its `deck-export` chunk,
+  writes `docs/deck_assets/deck_data.rds` (the `deck` bundle: `nums`, `figs`,
+  `tex`). This is the single source of every figure, table, and number the deck
+  shows.
+- `docs/UWRTSL-sodium-policy.Rmd` — the beamer deck. It does **zero** computation;
+  it only reads `deck_data.rds` via `N`, `fig()`, and `tbl()`.
+
+**Golden rule:** the deck must never compute anything. Any new number, figure, or
+table shown on a slide MUST first be produced in `reports/report.RMD`'s
+`deck-export` chunk and exposed through the `deck` bundle. If you find yourself
+about to hard-code a value or do arithmetic in the .Rmd deck, stop — add it to
+`report.RMD` instead and reference it as `N$...`. Do not refactor either file;
+make the smallest edits that achieve the changes below.
+
+## Working method
+
+- **First, review the whole 00→07 production pipeline** before touching the
+  presentation layer, so the deck matches what the code now actually does. Read, in
+  order: `00_run_model.R`, `02_load_inputs.R`, `03_clean_inputs.R`,
+  `04_define_intervention.R`, `05_build_baseline.R`, `07_run_interventions.R`, and
+  then `reports/report.RMD`. Confirm and report back to me, before editing:
+  - which scenarios `07` now emits (expect `lss_s2`, `lss_s4`, `lss_s5`; no bare
+    `lss`; media excluded from production but retained in the registry);
+  - that fiscal now ships a non-zero applied effect (the provisional 10% on the
+    taxed packaged share) and flows through `compute_total_efficacy()`;
+  - that the LSS trial-RR pathway writes both an incidence effect (`eff_ir`, stroke
+    causes, RR 0.90) AND a case-fatality effect (`eff_cf`, stroke causes,
+    0.77/0.90 = 0.856), i.e. case fatality is **no longer held at baseline** for
+    LSS scenarios;
+  - that the Euromonitor packaged-food trend is wired behind `run_packaged_trend`
+    (2025–2030 predicted APC, held flat after 2030) and changes source
+    *composition* over time rather than total intake;
+  - that public procurement now guards on `ADULT_POPULATION_ONLY` and no longer
+    silently assumes the school-inclusive 5% share;
+  - the scale-up window (2026→2030, linear, end-state at full scale-up).
+  Show me this summary and the list of `deck$nums` / `deck$figs` / `deck$tex` keys
+  that `report.RMD` currently exports, and wait for my "continue" before editing.
+- After each numbered task below, show me a diff and wait for "continue." Do not
+  batch tasks.
+- Whenever a value on a slide is provisional / pending RTSL sign-off, label it
+  explicitly on the slide as provisional (don't present a placeholder as final).
+
+## Decisions locked since the deck was last built (July 8/9/14/21 threads)
+
+These supersede the May-28 framing currently in the deck:
+
+- **Fiscal policy: INCLUDE** (it was "excluded pending decision"). Provisional
+  effect only; the country-specific Green-et-al elasticity model is future work.
+- **Behavior change / mass media: EXCLUDE** from reported scenarios (keep the
+  machinery in the registry).
+- **LSS:** run scenarios **2, 4, 5** (2 = whole-population discretionary with a
+  coverage toggle; 4 = diagnosed HTN; 5 = treated HTN). The **potassium effect is
+  essential** and is now captured via the SSaSS trial-RR pathway — so the deck's
+  repeated "no potassium channel / conservative lower bound / sodium arm only"
+  language for LSS is now **wrong** and must be corrected.
+- **Public procurement:** the flat 5% assumed school coverage; the model is
+  adults-only, so that share is being revised downward (RTSL owes the per-country
+  number). Present as provisional / under revision.
+- **Packaged food:** no longer assumed constant — a Euromonitor 2025–2030 trend is
+  now applied (Marklund's estimates; see the July 21 email and
+  `Euromonitor_trends_RTSL.xlsx`).
+- **Ramp-up:** confirmed 2026→2030 linear, effects applied as end-state at full
+  scale-up.
+- **Household uptake for LSS scenarios 4/5:** flagged as under investigation
+  (full spillover is long-term scope) — mention as in-progress, don't claim it's
+  implemented unless the code shows it is.
+
+---
+
+## Task 1 — Rework "Recap and today's plan" (recap of July 8 meeting + today's agenda)
+
+The current recap slides ("Recap: where we left off (May 28 call)" and "Recap:
+what the May 28 discussion decided") are out of date. Replace their content so they
+recap the **July 8/9 meeting** and its decisions, and rewrite "Today's agenda" to
+foreground the main changes being presented July 23.
+
+- Retitle the recap slides to reference the **July 8 call** (keep the two-slide
+  structure and the two-column layout on the decisions slide).
+- The decisions-recap slide should now reflect the locked decisions above: fiscal
+  IN, media OUT, LSS 2/4/5 with potassium captured, public-procurement share under
+  revision, packaged-food trend added, ramp-up confirmed 2026→2030. Keep the
+  scope/data column (priority countries, combined source-share approach, no SHAKE
+  mapping) but update anything the threads changed.
+- Rewrite **"Today's agenda"** so it leads with the five main changes since the
+  last presentation (see Task 6's list) rather than the old generic outline. Keep
+  it to one slide; keep any `r N$...` references valid.
+
+Any counts or country numbers referenced must come from `N` (add to `report.RMD`
+if missing).
+
+---
+
+## Task 2 — Fiscal policy: flip from "excluded" to "included (provisional)"
+
+Wherever the deck says fiscal is excluded / applied η = 0 / "overlaps baseline,"
+update it to reflect that fiscal is now included with a provisional effect. Slides
+affected (search for these): the effect-size slide caption (~"Fiscal is currently
+… excluded"), the "Illustrative η" and "Full-package η" slides, the projected-
+incidence caption ("Fiscal overlaps baseline"), the results-detail caption
+("Fiscal delays … M"), the Limitations bullet ("Fiscal policy currently
+excluded"), the Pending-decisions item 1, and Appendix slide "F. Fiscal policy /
+taxation."
+
+- The applied-η value must come from `report.RMD` (`N$eff_fiscal`), which should
+  now read the non-zero value the code produces — confirm `report.RMD` picks it up
+  from the updated `07` rather than a stale constant.
+- On Appendix F, keep the Saxena evidence but reframe: fiscal is now included as a
+  **provisional fixed effect on the taxed packaged share** (state the assumed
+  taxable-packaged share as an explicit, RTSL-to-confirm assumption); note the
+  country-specific price-elasticity model (Green et al. BMJ 2013, stratified by
+  country income level) as the planned refinement, not yet implemented.
+
+---
+
+## Task 3 — LSS: correct the potassium framing and show scenarios 2/4/5
+
+This is the most substantive content change. The deck currently presents LSS as a
+single hypertensive-only scenario with **no potassium channel** and calls it a
+"conservative lower bound." That is no longer true.
+
+- On "Low-sodium salt substitute (LSS) model — current version" (Methods) and
+  Appendix "C. Low-sodium salt substitutes (LSS)": replace the "no K⁺ channel /
+  lower bound / sodium arm only" language. Explain that LSS now uses the **SSaSS
+  trial-based relative risks (approach B)**, which capture the potassium-mediated
+  benefit: incidence RR **0.90** applied to stroke causes (ischemic + hemorrhagic),
+  and a conditional case-fatality multiplier **0.77/0.90 = 0.856** on stroke case
+  fatality — so for LSS scenarios, **case fatality is no longer held at baseline**.
+  State clearly that the total-stroke RR 0.86 is NOT applied separately (0.90 ×
+  0.856 reproduces it) and that non-stroke causes (IHD, HHD) are unaffected in the
+  base case. Cite Neal et al., NEJM 2021;385:1067–1077 (already
+  `\autocite{Neal2021LSSTrial}`).
+- Present the **three scenarios** explicitly: 2 (whole-population discretionary,
+  coverage toggle), 4 (diagnosed HTN), 5 (treated HTN). Note the coverage
+  assumptions as provisional (scenario-2 coverage manually adjustable; HTN
+  variants reuse HEARTS-linked coverage), and that **household uptake for 4/5 is
+  under investigation**.
+- Note the retained **sodium→SBP path as a documented sensitivity only**, never
+  combined with the trial-RR path.
+- **Important consistency fix:** the Methods slide "From η to health impact" and
+  the state-transition slide both assert "case fatality unchanged ⇒ deaths
+  delayed, not averted," and the causal-pathway/scope slide says "case fatality is
+  held at baseline." Since LSS trial-RR now moves case fatality, reconcile this:
+  clarify that CF is held at baseline for the sodium→SBP interventions but the LSS
+  trial-RR pathway does modify stroke CF, so LSS scenarios deliver some genuinely
+  **averted** (not merely delayed) deaths. Adjust the "deaths delayed" framing
+  wording wherever it's stated as universal. Any new numbers come from `report.RMD`.
+
+---
+
+## Task 4 — Public procurement: mark the 5% share as under revision (adults-only)
+
+On Appendix "A. Public food procurement" and the Methods worked-check (the
+"0.20 × 0.05" Viet Nam sanity check on the "From η to health impact" and
+"source-split" slides): keep the worked example but annotate that the **5% public
+share assumed school coverage and is being revised downward for an adults-only
+model** (RTSL to deliver per-country shares). If `report.RMD`/the code now use a
+revised share (or fail the `ADULT_POPULATION_ONLY` guard), reflect the actual value
+the pipeline produces via `N$...`; if the run used the provisional stale value,
+label it as such on the slide. Don't invent a number — pull whatever the pipeline
+emits.
+
+---
+
+## Task 5 — Packaged-food trend: add it to inputs/methods (no longer constant)
+
+The deck implies packaged consumption is static. Update:
+
+- On "Model inputs at a glance" and/or "Sodium source shares by country": note that
+  the packaged share now follows a **Euromonitor 2025–2030 predicted trend (median
+  APC over non-overlapping, sodium-relevant leaf categories), held flat after
+  2030**, changing source *composition* over time rather than total intake. Source
+  it to the Euromonitor data (July 21 thread, Marklund).
+- If `report.RMD` can produce a small figure or table of the applied per-country
+  packaged growth rates from `packaged_food_trends.rds`, add it to the
+  `deck-export` bundle and show it on the relevant inputs slide (or in the
+  appendix). If that's too large for this pass, add one sentence + a `N$...`
+  summary stat instead, and tell me which you chose.
+
+---
+
+## Task 6 — Add one "what changed" slide per change (new section after the recap)
+
+Add a short section — e.g. "Main changes since the last presentation" — with **one
+slide per change**, placed right after "Today's agenda." One slide each for:
+
+1. **Fiscal policy included** (provisional effect on taxed packaged share; elasticity
+   model as future refinement).
+2. **Media excluded** (retained in registry, out of reported scenarios).
+3. **LSS scenarios 2/4/5 + potassium via SSaSS trial-RR** (incidence RR 0.90 on
+   stroke, conditional CF 0.856; CF no longer fixed for LSS).
+4. **Euromonitor packaged-food trend** (2025–2030 APC, composition shift, flat
+   after 2030).
+5. **Public-procurement share under revision** (adults-only; school-inclusive 5%
+   being replaced).
+
+Keep each slide tight (a title, 2–4 bullets, and the applied value(s) as `N$...`).
+Match the deck's existing style (`\footnotesize`, `\justifying`, blocks where
+appropriate). Every number references the `deck` bundle — nothing computed in the
+deck.
+
+---
+
+## Task 7 — Update "Discussion and next steps"
+
+- **"Pending decisions — for discussion":** several items are now *decided*, not
+  pending. Move fiscal (now IN), media (now OUT), and LSS-scenario/potassium
+  confirmation out of "open items" — either strike them or recast them as
+  "decided since last meeting" — and keep genuinely open items (observation-period
+  harmonization, source-share strategy, policy framing, and any new ones: taxable-
+  packaged-share assumption, adults-only procurement number from RTSL, household
+  uptake for LSS 4/5).
+- **"Next steps and timeline":** update to the current state — inputs partly locked
+  (fiscal in, media out, LSS method set), still-pending items (RTSL procurement
+  number, packaged-trend category confirmation, elasticity-model refinement), the
+  economic layer, and the September BP-reinvestment deliverable. Keep the closing
+  "Discussion" block but refresh the question to match what's actually open now.
+
+---
+
+## Task 8 — Rebuild and verify
+
+- Re-run `reports/report.RMD` so `docs/deck_assets/deck_data.rds` is regenerated
+  with any new `nums`/`figs`/`tex` keys, THEN knit `docs/UWRTSL-sodium-policy.Rmd`.
+- Report pass/fail on:
+  1. The deck knits with no missing-asset / undefined-`N$` errors.
+  2. Every `r N$...`, `fig()`, and `tbl()` reference in the deck resolves to a key
+     that `report.RMD` actually exports (list any orphans).
+  3. No arithmetic or data loading was added to the .Rmd deck (deck still only
+     reads the bundle).
+  4. Fiscal now shows a non-zero applied η consistently across all slides that
+     mention it.
+  5. LSS slides no longer say "no potassium / lower bound / sodium arm only" and
+     the CF-framing is internally consistent across the causal-pathway, methods,
+     state-transition, and LSS slides.
+  6. Exactly one new "what changed" slide exists per the five changes in Task 6.
+- Give me a final list of every value you left as provisional/pending-RTSL on a
+  slide (fiscal effect + taxable packaged share, scenario-2 coverage, HTN
+  diagnosed/treated coverage, adults-only procurement share, Euromonitor leaf
+  categories) so I can flag them at the meeting.
+
+**Start with the pipeline review (00→07 then report.RMD) and the key-inventory
+summary. Show me that first and wait for "continue" before editing anything.**
+

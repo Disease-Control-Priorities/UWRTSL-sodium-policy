@@ -1225,9 +1225,9 @@ project.all <- function(
     salteff      = 0.0,
     saltyear1    = 2026,
     saltyear2    = 2030,
-    lss_reach    = "none",         # "none" | "all" | "htn_diagnosed" | "htn_treated"
+    lss_reach    = "htn_treated",         # "none" | "all" | "htn_diagnosed" | "htn_treated"
     lss_coverage = 1.0,            # fraction of the reached population using LSS
-    lss_method   = "sodium_sbp"    # "sodium_sbp" | "trial_rr" (SSaSS)
+    lss_method   = "trial_rr"    # "sodium_sbp" | "trial_rr" (SSaSS)
 ) {
   cat("\n========================================\n")
   cat("STARTING PROJECTION FOR:", Country, "\n")
