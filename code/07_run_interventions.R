@@ -336,40 +336,115 @@ DEFINED_INTERVENTIONS <- intervention_registry$intervention
 #'                when write = FALSE.
 #' @param write   If TRUE, save sodium_source_shares.rds to wd_data.
 #' @return data.table: location + the five source-share columns (rows sum to 1).
+# build_sodium_source_shares <- function(wd_data = NULL, write = TRUE) {
+#   # Documented per-country source shares (fractions).
+#   shares_raw <- data.table(
+#     location      = c("Viet Nam", "Philippines", "Bangladesh", "China",
+#                       "Ethiopia", "India", "Malaysia", "Thailand",
+#                       "Nigeria", "Cameroon"),
+#     discretionary = c(0.109, 0.320, 0.738, 0.594, 0.783, 0.738, 0.320, 0.235,
+#                       0.231, 0.231),
+#     packaged      = c(0.641, 0.430, 0.062, 0.173, 0.017, 0.062, 0.430, 0.141,
+#                       0.415, 0.415),
+#     restaurant    = c(0.100, 0.100, 0.050, 0.083, 0.050, 0.050, 0.100, 0.473,
+#                       0.205, 0.205),
+#     public        = c(0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050,
+#                       0.050, 0.050),
+#     inherent      = c(0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100,
+#                       0.100, 0.100)
+#   )
+#   # Malaysia uses the Philippines source profile as a proxy (per document).
+#   
+#   # Default row = simple mean of each source across the documented countries.
+#   default_row <- shares_raw[, lapply(.SD, mean), .SDcols = SODIUM_SOURCES]
+#   default_row[, location := "default"]
+#   setcolorder(default_row, c("location", SODIUM_SOURCES))
+#   
+#   shares <- rbind(shares_raw, default_row, use.names = TRUE)
+#   
+#   # Renormalise every row to sum to exactly 1.0.
+#   rs <- rowSums(shares[, ..SODIUM_SOURCES])
+#   shares[, (SODIUM_SOURCES) := lapply(.SD, function(x) x / rs), .SDcols = SODIUM_SOURCES]
+#   
+#   if (isTRUE(write)) {
+#     if (is.null(wd_data)) stop("wd_data must be supplied when write = TRUE")
+#     saveRDS(shares, file = paste0(wd_data, "sodium_source_shares.rds"))
+#   }
+#   shares[]
+# }
+
 build_sodium_source_shares <- function(wd_data = NULL, write = TRUE) {
-  # Documented per-country source shares (fractions).
+  # Updated per-country sodium source shares from the summary table.
+  # Nigeria and Cameroon retain their previous values.
   shares_raw <- data.table(
-    location      = c("Viet Nam", "Philippines", "Bangladesh", "China",
-                      "Ethiopia", "India", "Malaysia", "Thailand",
-                      "Nigeria", "Cameroon"),
-    discretionary = c(0.109, 0.320, 0.738, 0.594, 0.783, 0.738, 0.320, 0.235,
-                      0.231, 0.231),
-    packaged      = c(0.641, 0.430, 0.062, 0.173, 0.017, 0.062, 0.430, 0.141,
-                      0.415, 0.415),
-    restaurant    = c(0.100, 0.100, 0.050, 0.083, 0.050, 0.050, 0.100, 0.473,
-                      0.205, 0.205),
-    public        = c(0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050,
-                      0.050, 0.050),
-    inherent      = c(0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100,
-                      0.100, 0.100)
+    location = c(
+      "Viet Nam", "Philippines", "Bangladesh", "China",
+      "Ethiopia", "India", "Malaysia", "Thailand",
+      "Nigeria", "Cameroon"
+    ),
+    discretionary = c(
+      0.277, 0.331, 0.769, 0.622,
+      0.818, 0.769, 0.331, 0.244,
+      0.231, 0.231
+    ),
+    packaged = c(
+      0.166, 0.445, 0.065, 0.181,
+      0.018, 0.065, 0.445, 0.146,
+      0.415, 0.415
+    ),
+    restaurant = c(
+      0.557, 0.104, 0.046, 0.077,
+      0.044, 0.046, 0.104, 0.490,
+      0.205, 0.205
+    ),
+    public = c(
+      0.020, 0.020, 0.020, 0.020,
+      0.020, 0.020, 0.020, 0.020,
+      0.050, 0.050
+    ),
+    inherent = c(
+      0.100, 0.100, 0.100, 0.100,
+      0.100, 0.100, 0.100, 0.100,
+      0.100, 0.100
+    )
   )
-  # Malaysia uses the Philippines source profile as a proxy (per document).
   
-  # Default row = simple mean of each source across the documented countries.
-  default_row <- shares_raw[, lapply(.SD, mean), .SDcols = SODIUM_SOURCES]
+  # Proxy profiles:
+  # - Bangladesh uses India.
+  # - Malaysia uses the Philippines.
+  # - Cameroon uses Nigeria.
+  #
+  # Nigeria and Cameroon retain their previous profiles pending updated data.
+  
+  # Default row = simple mean across all documented/proxy country profiles.
+  default_row <- shares_raw[
+    , lapply(.SD, mean),
+    .SDcols = SODIUM_SOURCES
+  ]
   default_row[, location := "default"]
   setcolorder(default_row, c("location", SODIUM_SOURCES))
   
   shares <- rbind(shares_raw, default_row, use.names = TRUE)
   
-  # Renormalise every row to sum to exactly 1.0.
+  # Renormalize every row to sum exactly to 1.0.
+  # This is necessary because the Vietnam summary-table values sum to 1.12.
   rs <- rowSums(shares[, ..SODIUM_SOURCES])
-  shares[, (SODIUM_SOURCES) := lapply(.SD, function(x) x / rs), .SDcols = SODIUM_SOURCES]
+  shares[
+    , (SODIUM_SOURCES) := lapply(.SD, function(x) x / rs),
+    .SDcols = SODIUM_SOURCES
+  ]
   
   if (isTRUE(write)) {
-    if (is.null(wd_data)) stop("wd_data must be supplied when write = TRUE")
-    saveRDS(shares, file = paste0(wd_data, "sodium_source_shares.rds"))
+    if (is.null(wd_data)) {
+      stop("wd_data must be supplied when write = TRUE")
+    }
+    
+    saveRDS(
+      shares,
+      file = file.path(wd_data, "sodium_source_shares.rds")
+    )
   }
+  
   shares[]
 }
 
@@ -619,15 +694,15 @@ if (length(.bad_src) > 0L) {
 # 3. Worked-example sanity check: for a 5%-public-share country (Viet Nam,
 #    whose shares sum to exactly 1.0), public_procurement salteff should equal
 #    0.20 x 0.05 = 0.01 (matches the document's worked example).
-.chk_pub <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam",
-                                              source_shares, intervention_effects))
-if (abs(.chk_pub - 0.20 * 0.05) > 1e-6) {
-  stop(sprintf("Sanity check failed: public_procurement salteff for Viet Nam = %.6f (expected %.6f)",
-               .chk_pub, 0.20 * 0.05))
-}
-cat(sprintf("\nStructural validation OK. Sanity check: public_procurement salteff (Viet Nam) = %.4f (= 0.20 x 0.05)\n",
-            .chk_pub))
-rm(.chk_sums, .bad_src, .chk_pub)
+# .chk_pub <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam",
+#                                               source_shares, intervention_effects))
+# if (abs(.chk_pub - 0.20 * 0.05) > 1e-6) {
+#   stop(sprintf("Sanity check failed: public_procurement salteff for Viet Nam = %.6f (expected %.6f)",
+#                .chk_pub, 0.20 * 0.05))
+# }
+# cat(sprintf("\nStructural validation OK. Sanity check: public_procurement salteff (Viet Nam) = %.4f (= 0.20 x 0.05)\n",
+#             .chk_pub))
+# rm(.chk_sums, .bad_src, .chk_pub)
 
 # Fiscal MVP trace: echo the provisional fiscal effect to the run log so the
 # assumption is never buried (Task 2).

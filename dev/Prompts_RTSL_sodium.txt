@@ -1102,3 +1102,30 @@ deck.
 **Start with the pipeline review (00→07 then report.RMD) and the key-inventory
 summary. Show me that first and wait for "continue" before editing anything.**
 
+##########################################################3
+3##########################################################3
+
+modify only these two files:
+
+reports/report.Rmd
+docs/UWRTSL-sodium-policy-07232026.Rmd
+
+Add a benchmarking analysis comparing the current sodium-policy model results for the selected countries against the previous estimate for a 30% reduction in sodium intake from the “100 Million Lives Saved” paper.
+
+The previous-model results are stored in:
+
+data/raw/UWRTSL-100MLives_Output20260204.xlsx
+Sheet: Location And Cause
+
+Requirements:
+
+In reports/report.Rmd, import, clean, and filter the Excel data to the selected countries and the relevant 30% sodium-reduction intervention.
+Harmonize country names, outcome definitions, units, and analysis periods as needed, documenting any assumptions or non-equivalent definitions.
+Compare deaths delayed/averted under the current model’s full package with the previous modeling estimates.
+Create a clear bar plot comparing deaths delayed by location, distinguishing the current full package from the previous 30% sodium-reduction scenario.
+Add a concise benchmarking table and interpretation, emphasizing that this is a contextual comparison if the scenarios or time horizons are not fully equivalent.
+In docs/UWRTSL-sodium-policy-07232026.Rmd, add a concise slide presenting the comparison and consuming the objects created in reports/report.Rmd; do not duplicate the calculations.
+Follow the existing code style, naming conventions, country-selection parameters, plotting theme, and report-to-slides object-sharing workflow.
+Ensure the R Markdown files run without errors and that the new analysis updates automatically when the selected countries change.
+
+Do not modify any other files or introduce ad hoc adjustments to force agreement between the two models.

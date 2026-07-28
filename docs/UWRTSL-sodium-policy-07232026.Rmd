@@ -1,5 +1,5 @@
 ---
-title: "Health and Economic Returns to Dietary Sodium Reduction"
+title: "Health Effects to Dietary Sodium Reduction"
 subtitle: "Technical review of the source-split CVD model and preliminary results for prioritized countries"
 author: "Resolve to Save Lives (RTSL) and University of Washington"
 date: "`r format(Sys.Date(), '%B %Y')`"
@@ -71,6 +71,9 @@ From the July 9 meeting and discussion:
 \textbf{Scope \& data}
 \begin{itemize}
   \item Sodium sources: \textbf{combined approach} --- use country data where available, else the Bhat/Marklund GDP regression \autocite{marklund2022sources}. Drivers extend beyond GDP (condiments/bouillon in Viet Nam, Nigeria).
+  \item Updated sodium source shares with new data. \alert{Nigeria and Cameroon still missing (provisional)}
+  \item Benchmark: compare the full package to the 100M-Lives 30\% sodium cut (not a like-for-like validation, but a contextual cross-check).
+  
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
@@ -96,7 +99,7 @@ From the July 9 meeting and discussion:
   \item \textbf{Model inputs} --- updated sodium source shares by country (now incl.\ Nigeria/Cameroon) and the applied salt-effect $\eta$ for each intervention and the full package.
   \item \textbf{Methods} --- the source-split logic (sources $\to$ $\eta$), the state-transition engine, and the current low-sodium salt substitute (LSS) model.
   \item \textbf{Preliminary results} --- baseline burden, projected trajectories by scenario, and deaths delayed across the `r N$n_countries` prioritized countries.
-  \item \textbf{Limitations \& discussion} --- remaining open items and the timeline to the September reinvestment deliverable.
+  \item \textbf{Limitations \& discussion} --- remaining open items and the timeline to the August reinvestment deliverable.
 \end{enumerate}
 
 <!-- ======================================================================
@@ -116,6 +119,12 @@ From the July 9 meeting and discussion:
 
 \medskip
 \footnotesize \textbf{Provisional:} both the effect (`r N$fiscal_base_effect`) and the taxable-packaged share (`r N$fiscal_taxable_share`) are RTSL-to-confirm.
+
+\medskip
+\begin{alertblock}{Open question}
+\footnotesize
+What effect size should we assume for taxes on high-sodium ``junk foods''? The BMJ paper does not directly estimate price elasticities for these products. Sugary foods are the closest available category, but it is unclear whether those estimates can reasonably be extrapolated to salty foods.
+\end{alertblock}
 
 ## 2. Behavior change / mass media: excluded
 
@@ -143,6 +152,13 @@ From the July 9 meeting and discussion:
 - **Was:** the packaged share was assumed **constant** over time.
 - **Now:** a **Euromonitor 2025--2030** predicted trend (median APC $\approx$ **`r N$pkg_apc_median`**/yr, range `r N$pkg_apc_range`) grows the packaged share to a 2030 end-state, **held flat after 2030**.
 - **Composition shift only** --- total sodium intake is unchanged; the other sources renormalise. Source: Euromonitor (Marklund).
+
+\medskip
+\begin{alertblock}{Open question}
+\footnotesize
+Should the projected growth in packaged foods affect the baseline CVD burden? Holding total sodium intake constant makes this a composition shift only. Allowing it to increase sodium intake—and therefore hypertension and age-specific CVD—would require considering why other evolving risk factors, such as obesity and air pollution, are not also modeled.
+\end{alertblock}
+
 
 ## 5. Public procurement: share under revision (adults-only)
 
@@ -230,7 +246,7 @@ Baseline sodium is partitioned into **five mutually exclusive sources** (shares 
 knitr::include_graphics(fig("source_shares"))
 ```
 
-\scriptsize Country data where available; otherwise predicted from GDP per capita \autocite{marklund2022sources}. **Nigeria/Cameroon** use provisional RTSL/Matti shares (bouillon + condiments counted as packaged; Nigeria a proxy for Cameroon). These are the **2024** shares; the **packaged share then grows** over time on the Euromonitor trend (median APC $\approx$ `r N$pkg_apc_median`/yr; per-country values in the appendix).
+<!-- \scriptsize Country data where available; otherwise predicted from GDP per capita \autocite{marklund2022sources}. **Nigeria/Cameroon** use provisional RTSL/Matti shares (bouillon + condiments counted as packaged; Nigeria a proxy for Cameroon). These are the **2024** shares; the **packaged share then grows** over time on the Euromonitor trend (median APC $\approx$ `r N$pkg_apc_median`/yr; per-country values in the appendix). -->
 
 ## Applied salt-effect ($\eta$) by intervention
 
@@ -335,17 +351,26 @@ Media (retained in the registry, excluded from reported scenarios) acts on discr
 \justifying
 \footnotesize
 
-LSS now uses the **SSaSS trial relative risks** ("approach B") \autocite{Neal2021LSSTrial}, which **capture the potassium-mediated benefit** --- the earlier "sodium arm only / no potassium channel / lower bound" treatment no longer applies.
+<!-- LSS now uses the **SSaSS trial relative risks** ("approach B") \autocite{Neal2021LSSTrial}, which **capture the potassium-mediated benefit** --- the earlier "sodium arm only / no potassium channel / lower bound" treatment no longer applies. -->
 
 \begin{block}{Trial-RR decomposition (no double-count)}
 \footnotesize
-Stroke incidence RR **`r N$lss_rr_stroke_inc`** (ischemic + hemorrhagic) \emph{and} a conditional case-fatality multiplier **0.77/`r N$lss_rr_stroke_inc` = `r N$lss_cf_mult`** on stroke CF. The total-stroke RR **`r N$lss_stroke_total`** is \emph{not} applied separately ($0.90\times0.856$ reproduces it). IHD/HHD unaffected $\Rightarrow$ \textbf{case fatality is no longer held at baseline for LSS}.
+Stroke incidence RR **`r N$lss_rr_stroke_inc`** (ischemic + hemorrhagic) \emph{and} a conditional case-fatality multiplier **0.77/`r N$lss_rr_stroke_inc` = `r N$lss_cf_mult`** on stroke CF \autocite{Neal2021LSSTrial}.  IHD/HHD unaffected $\Rightarrow$ \textbf{case fatality is no longer held at baseline for LSS}.
 \end{block}
+
+<!-- The total-stroke RR **`r N$lss_stroke_total`** is \emph{not} applied separately ($0.90\times0.856$ reproduces it). -->
 
 - **Three scenarios (coverage provisional, RTSL/HEARTS to confirm):** \textbf{sc.\ 2} whole-population discretionary (adjustable coverage `r N$lss_cov_all`); \textbf{sc.\ 4} diagnosed HTN (`r N$htn_dx_cov`); \textbf{sc.\ 5} treated HTN (`r N$htn_tx_cov`). **Household uptake for 4/5 is under investigation.**
 - **Sodium$\to$SBP path retained as a documented sensitivity only** (the `r N$eff_lss`-of-discretionary value, sensitivity `r N$lss_sens`); never combined with the trial-RR path.
 
 \scriptsize SSaSS context: `r N$lss_ratio` substitute, ITT `r N$ssass_na_mgday` sodium vs.\ a `r N$ssass_base_gday` baseline, observed `r N$ssass_sbp_mmhg` SBP (much of it potassium-driven, `r N$ssass_k_mgday`) \autocite{huang2026}.
+
+
+\medskip
+\begin{alertblock}{Open question}
+\footnotesize
+Which approach should we use? Either model population-wide sodium and potassium changes through SBP, following Marklund, or restrict the SSaSS trial RRs to high-risk adults with hypertension—including undiagnosed, diagnosed untreated, and treated individuals. Applying SSaSS effects to the entire population may not be justified.
+\end{alertblock}
 
 <!-- ======================================================================
      5. BASELINE AND PROJECTIONS
@@ -419,16 +444,16 @@ tbl("results")
 \scriptsize
 Among the reported policies, **salt targets** delays the most (`r N$salt_targets_m` M), then **FOPL** (`r N$fopl_m` M), **public procurement** (`r N$public_m` M, provisional), and **fiscal** (`r N$fiscal_m` M, provisional). **LSS (SSaSS trial-RR)** runs as three scenarios: whole-population **sc.\ 2** `r N$lss_s2_m` M, diagnosed-HTN **sc.\ 4** `r N$lss_s4_m` M, treated-HTN **sc.\ 5** `r N$lss_s5_m` M --- targeting discretionary salt, which dominates intake in the most populous countries. Media is excluded from reported scenarios.
 
-## Full package: deaths delayed by cause
+<!-- ## Full package: deaths delayed by cause -->
 
-\justifying
-\footnotesize
+<!-- \justifying -->
+<!-- \footnotesize -->
 
-```{r fig-bycause, out.width="82%"}
-knitr::include_graphics(fig("bycause"))
-```
+<!-- ```{r fig-bycause, out.width="82%"} -->
+<!-- knitr::include_graphics(fig("bycause")) -->
+<!-- ``` -->
 
-\scriptsize Ischemic heart disease and stroke dominate the delayed deaths, tracking their share of the baseline CVD burden and their SBP-mediated relative risks.
+<!-- \scriptsize Ischemic heart disease and stroke dominate the delayed deaths, tracking their share of the baseline CVD burden and their SBP-mediated relative risks. -->
 
 ## Full package: deaths delayed by country
 
@@ -440,6 +465,24 @@ knitr::include_graphics(fig("countries"))
 ```
 
 \scriptsize Absolute counts are dominated by the most populous countries (China, India); per-capita impact depends on baseline burden and local source structure.
+
+## Benchmark: full package vs.\ the 100M-Lives 30\% sodium cut
+
+\justifying
+\footnotesize
+
+```{r fig-benchmark, out.width="66%"}
+knitr::include_graphics(fig("benchmark"))
+```
+
+<!-- \begin{exampleblock}{Contextual cross-check (not a like-for-like validation)} -->
+\vspace{-0.3em}
+\begin{exampleblock}{Contextual cross-check}
+\footnotesize
+Across the `r N$bench_n` selected countries, the current \textbf{full package} delays \textbf{`r N$bench_current_m` M} CVD deaths vs.\ \textbf{`r N$bench_prev_m` M} for the previous \textbf{100 Million Lives Saved} flat 30\% population sodium reduction ($\approx$\textbf{`r N$bench_ratio`$\times$}). The package delivering less is \emph{expected}: it applies \textbf{source-limited} policy effects, not a uniform 30\% intake cut.
+\end{exampleblock}
+
+<!-- \scriptsize Same four CVD causes and "deaths delayed" outcome; baselines and horizons differ, so the two are compared on order of magnitude and country ranking, not exact equivalence. Previous figures: \texttt{UWRTSL-100MLives\_Output20260204.xlsx} ("Population Sodium Reduction"). -->
 
 <!-- ======================================================================
      7. LIMITATIONS
@@ -499,13 +542,13 @@ knitr::include_graphics(fig("countries"))
 - **Inputs partly locked** --- fiscal \emph{in} (provisional), media \emph{out}, LSS method set (SSaSS trial RRs, scenarios 2/4/5), ramp-up `r N$scaleup1`$\to$`r N$scaleup2` confirmed.
 - **Still pending** --- RTSL's adults-only procurement shares, confirmation of the Euromonitor packaged-trend categories, and the fiscal price-elasticity refinement \autocite{Green2013}.
 - **Add the economic layer** --- policy costing plus benefit--cost outputs (NPV, BCR) and DALYs.
-- **Primary deliverable** --- the **BP reinvestment proposal** memo (tables + figures), target **September 2026**.
+- **Primary deliverable** --- the **BP reinvestment proposal** memo (tables + figures), target **August 2026**.
 - **Paper** is secondary; coordinate with Matti on the Bhat/Marklund inputs to avoid scooping the forthcoming paper.
 
 \medskip
 \begin{block}{Discussion}
 \footnotesize
-With fiscal/media/LSS now decided, where should we push hardest before the September reinvestment deliverable --- the pending data (adults-only procurement shares, packaged-trend categories), the fiscal elasticity refinement, or the economic layer?
+With fiscal/media/LSS now decided, where should we push hardest before the August reinvestment deliverable --- the pending data (adults-only procurement shares, packaged-trend categories), the fiscal elasticity refinement, or the economic layer?
 \end{block}
 
 <!-- ======================================================================

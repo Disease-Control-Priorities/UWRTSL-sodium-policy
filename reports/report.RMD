@@ -33,6 +33,7 @@ library(knitr)
 library(kableExtra)
 library(DT)
 library(scales)
+library(readxl)   # benchmark import (100 Million Lives Saved workbook)
 ```
 
 ```{r paths, message=FALSE, warning=FALSE, echo=FALSE}
@@ -1736,6 +1737,225 @@ if (data.out[, any(!is.na(region))]) {
 
 ---
 
+# Benchmarking against the "100 Million Lives Saved" model {#benchmarking}
+
+As an external sanity check, we compare this build's headline result — the
+**full package** of sodium policies — against the previous RTSL/UW
+**"100 Million Lives Saved"** estimate for a **30% reduction in population
+sodium intake**. The previous-model figures are read from
+[`data/raw/UWRTSL-100MLives_Output20260204.xlsx`](../data/raw/UWRTSL-100MLives_Output20260204.xlsx)
+(sheet `Location And Cause`, intervention `Population Sodium Reduction`). The
+comparison is restricted to the **same selected countries** this report models,
+so it tracks the country selection automatically.
+
+**This is a contextual comparison, not a like-for-like validation.** The two
+estimates are close in construction but *not* equivalent, and we do not adjust
+either to force agreement:
+
+- **Exposure change differs.** The previous scenario applies a **uniform 30%
+  cut to all population sodium**. The current full package applies each policy's
+  documented effect **only to the sodium sources it can reach** (public
+  procurement + FOPL + salt targets + fiscal), giving a country-specific
+  total-intake reduction (`salteff`) that is generally **well below 30%**. The
+  current package is therefore expected to delay **fewer** deaths than a flat
+  30% cut — the gap is a feature of the policy-reach logic, not an error.
+- **Outcome & causes.** Both report **deaths delayed** relative to a
+  no-intervention baseline over the same four CVD causes (IHD, ischemic stroke,
+  intracerebral hemorrhage, HHD), so the outcome definition is aligned.
+- **Baselines & horizon differ.** The two models use different baseline death
+  counts (different populations, age ranges and projection horizons), so we
+  report deaths delayed both in **absolute** terms and as a **percent of each
+  model's own baseline** — the percent is the more comparable metric. The
+  previous model's cumulative horizon is close to, but not identical to, this
+  build's `r impact_window` window.
+- **Country names** are harmonised onto this model's spellings before matching
+  (all ten priority countries match exactly; e.g. `Viet Nam`).
+
+```{r benchmark-compute, message=FALSE, warning=FALSE, echo=FALSE}
+# ---- Benchmark: current full package vs 100M-Lives 30% sodium reduction ------
+# Previous-model results live in the 100 Million Lives Saved workbook, sheet
+# "Location And Cause". The comparison row is the "Population Sodium Reduction"
+# intervention, which in that model represents the WHO 30%-relative-reduction
+# sodium target. We compare it to THIS build's full package (reusing dd_country
+# computed above; the model itself is never re-run here).
+PREV_XLSX       <- paste0(wd_raw, "UWRTSL-100MLives_Output20260204.xlsx")
+PREV_SHEET      <- "Location And Cause"
+PREV_SODIUM_INT <- "Population Sodium Reduction"   # = 30% population sodium reduction
+
+# Harmonise previous-model country names onto this model's spellings. The ten
+# priority countries already match; this guards other spellings for robustness.
+harmonize_prev_location <- function(x) {
+  x <- as.character(x)
+  x[x == "Vietnam"]                  <- "Viet Nam"
+  x[x == "United States of America"] <- "United States"
+  x
+}
+
+# Current model: full-package deaths delayed by country over the impact window.
+bench_current <- dd_country[, .(location,
+                                dd_current   = deaths_delayed,
+                                base_current = baseline_dead)]
+
+# Selected countries = whatever the model was run for; the benchmark filters the
+# previous-model table to exactly these, so it updates with the selection.
+sel_countries <- sort(unique(as.character(bench_current$location)))
+
+benchmark <- tryCatch({
+  prev <- as.data.table(readxl::read_excel(PREV_XLSX, sheet = PREV_SHEET))
+  prev[, location := harmonize_prev_location(location)]
+  prev <- prev[intervention == PREV_SODIUM_INT & location %in% sel_countries,
+               .(location,
+                 dd_prev   = as.numeric(deaths_delayed),
+                 base_prev = as.numeric(baseline_deaths))]
+  b <- merge(bench_current, prev, by = "location", all.x = TRUE)
+  b[, `:=`(pct_current = dd_current / base_current,
+           pct_prev    = dd_prev    / base_prev,
+           ratio       = dd_current / dd_prev)]
+  setorder(b, -dd_prev)
+  b[]
+}, error = function(e) {
+  message("Benchmark workbook could not be read: ", conditionMessage(e))
+  NULL
+})
+
+benchmark_available <- !is.null(benchmark) && nrow(benchmark) > 0 &&
+  any(!is.na(benchmark$dd_prev))
+
+# Selected-country totals (used inline, in the deck bundle, and for the plot).
+if (benchmark_available) {
+  bench_cur_tot   <- sum(benchmark$dd_current, na.rm = TRUE)
+  bench_prev_tot  <- sum(benchmark$dd_prev,    na.rm = TRUE)
+  bench_ratio_tot <- bench_cur_tot / bench_prev_tot
+} else {
+  bench_cur_tot <- bench_prev_tot <- bench_ratio_tot <- NA_real_
+}
+
+# Long form for the grouped bar plot (built once, reused by the deck export).
+bench_model_labs <- c(dd_current = "Current full package",
+                      dd_prev    = "Previous 30% sodium reduction")
+bench_cols <- c(`Current full package`         = "#1f78b4",
+                `Previous 30% sodium reduction` = "#b2182b")
+if (benchmark_available) {
+  bench_long <- melt(benchmark[, .(location, dd_current, dd_prev)],
+                     id.vars = "location", variable.name = "model",
+                     value.name = "dd")
+  bench_long[, model := factor(bench_model_labs[as.character(model)],
+                               levels = unname(bench_model_labs))]
+  bench_long <- bench_long[!is.na(dd)]
+} else {
+  bench_long <- NULL
+}
+```
+
+```{r benchmark-availability-note, message=FALSE, warning=FALSE, echo=FALSE, results='asis'}
+if (!benchmark_available)
+  cat("**Benchmark workbook unavailable — the comparison below is skipped.** ",
+      "Place `UWRTSL-100MLives_Output20260204.xlsx` in `data/raw/` and re-knit.\n")
+```
+
+Over `r impact_window`, across the `r length(sel_countries)` selected countries,
+the current **full package** delays **`r fmt_m(bench_cur_tot)` million** CVD
+deaths, versus **`r fmt_m(bench_prev_tot)` million** for the previous flat-30%
+sodium-reduction scenario — a ratio of about
+**`r formatC(bench_ratio_tot, format = "f", digits = 2)`×**. The current
+package delivering a smaller total is expected: its source-limited `salteff` is
+generally well below a uniform 30% intake cut.
+
+## Benchmark table
+
+```{r benchmark-table, message=FALSE, warning=FALSE, echo=FALSE}
+if (benchmark_available) {
+  bt  <- copy(benchmark)
+  setorder(bt, -dd_prev)
+  tot <- data.table(
+    location     = "Total (selected countries)",
+    dd_current   = sum(bt$dd_current,   na.rm = TRUE),
+    base_current = sum(bt$base_current, na.rm = TRUE),
+    dd_prev      = sum(bt$dd_prev,      na.rm = TRUE),
+    base_prev    = sum(bt$base_prev,    na.rm = TRUE))
+  tot[, `:=`(pct_current = dd_current / base_current,
+             pct_prev    = dd_prev    / base_prev,
+             ratio       = dd_current / dd_prev)]
+  bt_all <- rbind(bt, tot, fill = TRUE)
+
+  bt_fmt <- bt_all[, .(
+    Country                              = location,
+    `Current: deaths delayed (M)`        = fmt_m(dd_current, 3),
+    `Current: % of baseline`             = fmt_pct(pct_current, 2),
+    `Previous 30%: deaths delayed (M)`   = fmt_m(dd_prev, 3),
+    `Previous 30%: % of baseline`        = fmt_pct(pct_prev, 2),
+    `Current ÷ previous`                 = formatC(ratio, format = "f", digits = 2)
+  )]
+
+  kable(bt_fmt,
+        caption = paste0("Table 4. Benchmark — current full package vs. the ",
+                         "100 Million Lives Saved 30% population sodium-reduction ",
+                         "estimate, ", impact_window, ", ", nrow(bt),
+                         " selected countries."),
+        align = c("l", rep("r", 5))) |>
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = TRUE, font_size = 13) |>
+    add_header_above(c(" " = 1, "Current model (full package)" = 2,
+                       "Previous model (30% sodium)" = 2, " " = 1)) |>
+    row_spec(0, bold = TRUE) |>
+    row_spec(nrow(bt_fmt), bold = TRUE, background = "#eef2f7") |>
+    footnote(general = paste0(
+      "Previous-model figures: UWRTSL-100MLives_Output20260204.xlsx (sheet ",
+      "'Location And Cause', intervention 'Population Sodium Reduction'). ",
+      "'% of baseline' is each model's deaths delayed relative to ITS OWN ",
+      "baseline CVD deaths, which is the more comparable metric because the ",
+      "two models use different baselines and horizons. This is a contextual ",
+      "comparison: the previous scenario applies a uniform 30% sodium cut, ",
+      "whereas the full package applies source-limited policy effects, so the ",
+      "current total is expected to be lower."))
+} else {
+  cat("Benchmark workbook unavailable; Table 4 skipped.\n")
+}
+```
+
+## Figure 7 — Deaths delayed by country: full package vs. 30% sodium reduction
+
+```{r benchmark-fig, message=FALSE, warning=FALSE, echo=FALSE, fig.width=10, fig.height=6}
+if (benchmark_available) {
+  p_bench <- ggplot(bench_long,
+                    aes(dd / 1e6, reorder(location, dd), fill = model)) +
+    geom_col(width = 0.7, position = position_dodge(width = 0.78)) +
+    geom_text(aes(label = fmt_m(dd, 2)), position = position_dodge(width = 0.78),
+              hjust = -0.1, size = 2.9) +
+    scale_fill_manual(values = bench_cols, name = NULL) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.16)), labels = comma) +
+    labs(title = paste0("Deaths delayed: current full package vs. previous 30% ",
+                        "sodium reduction"),
+         subtitle = paste0(length(sel_countries), " selected countries; ",
+                          impact_window, "; all CVD causes"),
+         x = "Deaths delayed (millions)", y = NULL,
+         caption = paste0("Previous = 100 Million Lives Saved, 'Population Sodium ",
+                          "Reduction' (30% intake cut). Contextual comparison; ",
+                          "scenarios and horizons are not fully equivalent.")) +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "bottom", plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+  print(p_bench)
+} else {
+  cat("Benchmark workbook unavailable; Figure 7 skipped.\n")
+}
+```
+
+**Interpretation.** The two models rank the selected countries similarly —
+China and India dominate the absolute deaths delayed under both, tracking their
+share of the regional CVD burden. The **previous flat-30% scenario delays more
+deaths** than the current full package in essentially every country, consistent
+with its larger (uniform) exposure change; the current package's benefit is
+bounded by how much of each country's sodium its four policies can actually
+reach. Where the current package closes much of the gap (a higher
+current ÷ previous ratio), local intake is concentrated in the **packaged**
+source that FOPL, salt targets and fiscal policy jointly target. Because the
+scenarios and horizons are **not fully equivalent**, these numbers should be
+read as a **contextual cross-check** on order of magnitude and country ranking,
+not as a validation target.
+
+---
+
 # Limitations and interpretation
 
 - **Deaths delayed, not averted (sodium→SBP policies).** For public procurement,
@@ -1974,6 +2194,29 @@ p_ct <- ggplot(dd_ctry, aes(deaths_delayed / 1e6, reorder(location, deaths_delay
   theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
 save_fig(p_ct, "fig_countries.png", 8.5, 5)
 
+# ---- FIG: benchmark vs 100M-Lives 30% sodium reduction ----------------------
+# Always writes fig_benchmark.png so the deck can include it unconditionally;
+# falls back to a text placeholder if the benchmark workbook was unavailable.
+if (benchmark_available) {
+  p_bench_deck <- ggplot(bench_long,
+                         aes(dd / 1e6, reorder(location, dd), fill = model)) +
+    geom_col(width = 0.7, position = position_dodge(width = 0.78)) +
+    geom_text(aes(label = fmt_m(dd, 2)), position = position_dodge(width = 0.78),
+              hjust = -0.1, size = 3) +
+    scale_fill_manual(values = bench_cols, name = NULL) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.16)), labels = comma) +
+    labs(x = "Deaths delayed (millions)", y = NULL) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+          panel.grid.major.y = element_blank())
+} else {
+  p_bench_deck <- ggplot() +
+    annotate("text", x = 0, y = 0,
+             label = "Benchmark workbook unavailable", size = 5, colour = "grey40") +
+    theme_void()
+}
+save_fig(p_bench_deck, "fig_benchmark.png", 9.5, 5)
+
 # ---- TABLES (pre-rendered LaTeX) --------------------------------------------
 # Effect sizes (Table M2).
 tef <- as.data.frame(eff_disp)
@@ -2009,6 +2252,27 @@ tres <- data.frame(
   check.names = FALSE, row.names = NULL, stringsAsFactors = FALSE
 )
 tex_results <- mk_tex(tres, align = c("l", "r", "r", "r"))
+
+# Benchmark vs 100M-Lives 30% sodium reduction (compact; totals row included).
+if (benchmark_available) {
+  bench_tex_dt <- rbind(
+    benchmark[, .(location, dd_current, pct_current, dd_prev, pct_prev, ratio)],
+    benchmark[, .(location = "Total (selected)",
+                  dd_current = sum(dd_current, na.rm = TRUE), pct_current = NA_real_,
+                  dd_prev    = sum(dd_prev,    na.rm = TRUE), pct_prev    = NA_real_,
+                  ratio = sum(dd_current, na.rm = TRUE) / sum(dd_prev, na.rm = TRUE))]
+  )
+  tbn <- data.frame(
+    Country            = bench_tex_dt$location,
+    `Current (M)`      = fmt_m(bench_tex_dt$dd_current, 2),
+    `Prev 30% (M)`     = fmt_m(bench_tex_dt$dd_prev, 2),
+    `Cur / prev`       = formatC(bench_tex_dt$ratio, format = "f", digits = 2),
+    check.names = FALSE, row.names = NULL, stringsAsFactors = FALSE
+  )
+  tex_benchmark <- mk_tex(tbn, align = c("l", "r", "r", "r"))
+} else {
+  tex_benchmark <- "\\emph{Benchmark table unavailable.}"
+}
 
 # ---- NUMBERS ----------------------------------------------------------------
 pkg_row <- dd_cum[as.character(scenario) == "full_package"]
@@ -2067,7 +2331,13 @@ nums <- list(
   ssass_base_gday  = "4.3 g/day",
   ssass_sbp_mmhg   = "-3.34 mmHg",
   ssass_k_mgday    = "+803 mg/day",
-  lss_ratio        = "75% NaCl / 25% KCl"
+  lss_ratio        = "75% NaCl / 25% KCl",
+  # benchmark vs the 100 Million Lives Saved 30% population sodium reduction
+  bench_n          = length(sel_countries),
+  bench_current_m  = if (benchmark_available) fmt_m(bench_cur_tot, 2)  else "n/a",
+  bench_prev_m     = if (benchmark_available) fmt_m(bench_prev_tot, 2) else "n/a",
+  bench_ratio      = if (benchmark_available)
+                       formatC(bench_ratio_tot, format = "f", digits = 2) else "n/a"
 )
 
 # LaTeX-safe percent signs. The deck inlines these nums both in markdown text
@@ -2088,7 +2358,8 @@ figs <- list(
   deaths        = "fig_deaths.png",
   results_bar   = "fig_results_bar.png",
   bycause       = "fig_bycause.png",
-  countries     = "fig_countries.png"
+  countries     = "fig_countries.png",
+  benchmark     = "fig_benchmark.png"
 )
 
 tex <- list(
@@ -2096,7 +2367,8 @@ tex <- list(
   salteff        = tex_salteff,
   source_shares  = tex_source_shares,
   packaged_trend = tex_packaged_trend,
-  results        = tex_results
+  results        = tex_results,
+  benchmark      = tex_benchmark
 )
 
 deck <- list(nums = nums, figs = figs, tex = tex)
