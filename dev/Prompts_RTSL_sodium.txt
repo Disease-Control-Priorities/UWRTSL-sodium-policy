@@ -1129,3 +1129,445 @@ Follow the existing code style, naming conventions, country-selection parameters
 Ensure the R Markdown files run without errors and that the new analysis updates automatically when the selected countries change.
 
 Do not modify any other files or introduce ad hoc adjustments to force agreement between the two models.
+
+
+#######33
+
+# New LSS model
+
+CONTEXT
+=======
+R sodium-policy microsimulation (proportional multistate life table; sodium → SBP →
+CVD/CKD). Orchestrated by code/00_run_model.R sourcing in order: 01_utils.R →
+02_load_inputs.R → 03_clean_inputs.R → 04_define_intervention.R → 05_build_baseline.R →
+07_run_interventions.R. (06_run_scenarios*.R are legacy; NOT sourced — do not touch them.)
+report/report.RMD renders methods/results/figures and exports a slide deck.
+
+The active engine is 07_run_interventions.R. It splits baseline sodium into 5 sources
+(discretionary, packaged, restaurant, public, inherent), applies per-intervention relative
+reductions via compute_total_efficacy() → scalar `salteff`, then runs the state-transition
+loop. Interventions: public_procurement, media_campaign (excluded from reported scenarios),
+fopl, salt_targets, fiscal, lss.
+
+I want the smallest coherent set of changes for FOUR model updates plus the report. Do NOT
+change the source-split architecture, the state-transition loop, the parallel harness, or
+unrelated interventions. Prefer additive, well-commented edits with assertions and run-log
+lines over silent behaviour changes. After each task, print the file + line ranges changed
+and a one-line rationale. Do NOT run the model or knit until I say so (there is a final
+"run + verify" step). Do not commit or push.
+
+Inputs I have added to data/raw/:
+  - NCD-RisC/NCD-RisC_Lancet_2021_Hypertension_age_standardised_countries.csv
+      Columns include "Proportion of diagnosed hypertension among all hypertension",
+      "Proportion of treated hypertension among all hypertension",
+      "Proportion of controlled hypertension among all hypertension" (already used),
+      plus lower/upper 95% UI for each. Sex = Men/Women; Age = "Age standardised (30-79
+      years)"; annual to 2019. All 10 priority countries present.
+  - Euromonitor_trends_RTSL_v002.xlsx  (Matti's updated workbook — REPLACES the old
+      Euromonitor_trends_RTSL.xlsx). Sheets: README, "All observed (2011-2025)" (columns
+      aapc + aapc_se/lcl/ucl, linear_trend + SE/CI), "Post-COVID (2023-2025)" and
+      "Predictions (2025-2030)" (columns apc + apc_se/lcl/ucl, linear_trend + SE/CI).
+      CRITICAL CHANGE: each geography now has a pre-computed row
+      series_category = "Combined selected sodium-sources categories" (code = 0) that
+      already combines the sodium-relevant categories into ONE trend per geography, WITH
+      confidence intervals. There is NO sales-volume column in this workbook.
+      Geographies use "Vietnam" (→ model "Viet Nam"); all 10 priority countries present.
+
+======================================================================
+TASK 1 — LSS: mechanistic Na/K→SBP model as PRIMARY; NCD-RisC eligibility;
+SSaSS trial-RR retained as a benchmark. (This is the biggest change.)
+======================================================================
+Current state: LSS emits three variants (lss_s2 "all", lss_s4 "htn_diagnosed", lss_s5
+"htn_treated") in build_scenario_configs(); coverage is hardcoded placeholders
+(LSS_COVERAGE_ALL 0.50, HTN_DIAGNOSED_COV 0.33, HTN_TREATED_COV 0.25); reach for s4/s5 is a
+BP≥140 proxy; the reported effect is the SSaSS trial-RR pathway (lss_method="trial_rr",
+stroke incidence RR 0.90 + conditional CF 0.856); a sodium→SBP path exists as a sensitivity
+hook (lss_method="sodium_sbp") plus a scalar EFF_LSS_DISCRETIONARY=0.15.
+
+1a. NCD-RisC eligibility. In 02_load_inputs.R, extend the existing NCD-RisC read (~line 543)
+    to ALSO pull diagnosed and treated proportions and their 95% UIs (keep the existing
+    `control` logic intact). Build a per-country-and-sex table `htn_eligibility` with:
+    location (canonical model name), iso3, sex, source_year, htn_prev, diagnosed_cond,
+    treated_cond (conditional-on-hypertension proportions), plus their lcl/ucl, and derived
+    POPULATION shares:
+        diagnosed_pop = htn_prev * diagnosed_cond
+        treated_pop   = htn_prev * treated_cond
+    Use the most recent available year (2019) and carry it forward for later model years;
+    make the source year a named control HTN_SOURCE_YEAR <- 2019. Map names through the SAME
+    name_map used in 05_build_baseline.R (define/reuse it). saveRDS to
+    data/processed/htn_eligibility.rds. Document in a comment that these are
+    age-standardised 30–79 estimates, NOT age-specific, and that population shares feed LSS
+    eligibility. Add a hard check: every modelled country×sex must have non-NA
+    diagnosed_pop/treated_pop, else stop() with the offending rows (no silent fallback to
+    old constants).
+
+1b. Mechanistic Na/K→SBP LSS model as PRIMARY (lss_method = "na_k_sbp"). Implement a new
+    pathway in calculate_sodium_impact_etihad() (or a clearly-scoped helper it calls) that,
+    for the reached+adherent eligible population, models:
+        LSS composition (NaCl/KCl fractions, default 75/25, as named constants)
+        → discretionary-sodium displaced  (per-user, from discretionary share × uptake ×
+          adherence)
+        → potassium added
+        → sodium-mediated SBP change (existing sodium→SBP dose-response, hypertension-
+          weighted, already in the file)
+        → potassium-mediated SBP change (NEW: add a K→SBP dose-response as a named,
+          documented constant/function — e.g. from a K supplementation meta-analysis;
+          make the source and value explicit and configurable; allow a
+          non-hypertensive-attenuation toggle)
+        → COMBINED SBP change under an explicit ADDITIVITY assumption (named toggle
+          LSS_NAK_ADDITIVE default TRUE)
+        → existing ETIHAD/GBD SBP→cause RR machinery → outcomes.
+    Expose named constants for NaCl/KCl fractions, K→SBP slope, uptake, adherence, and
+    additivity. Keep the guardrail that a given cause is touched by exactly ONE pathway per
+    run (never na_k_sbp AND trial_rr AND sodium→SBP stacked).
+
+1c. Method as a first-class, top-level switch. Add LSS_METHOD control in SECTION 0 with
+    allowed values "na_k_sbp" (default/primary) and "ssass_trial_rr" (benchmark). Thread it
+    into the lss_variants (currently hardcoded "trial_rr"). Keep BOTH available; if I run
+    both, they must be DISTINCT scenarios (e.g. suffix the scenario name with the method, or
+    carry an explicit lss_method column into the output), never merged under one ambiguous
+    label. Retain the existing trial-RR stroke-incidence + conditional-CF decomposition
+    unchanged for the benchmark, and keep EFF_LSS_DISCRETIONARY=0.15 ONLY as a labelled
+    simplified sodium-only sensitivity (not the base case).
+
+1d. Reach + coverage from NCD-RisC, not BP≥140. Replace the BP≥140 proxy for s4/s5 with
+    NCD-RisC population eligibility from htn_eligibility (diagnosed_pop for s4, treated_pop
+    for s5), country×sex specific. s2 (whole-population) keeps its manual LSS_COVERAGE_ALL
+    toggle. Because build_scenario_configs() runs once but run_multiple_scenarios() runs per
+    country, resolve the per-country×sex coverage inside the per-country runner (or pass
+    htn_eligibility down), with the scalar placeholder used ONLY if a country is genuinely
+    missing (which 1a already forbids). Add a guard: if LSS_METHOD == "ssass_trial_rr" AND a
+    variant's reach == "all" (s2), stop() — SSaSS RRs are not applicable to the whole
+    population (conceptual-consistency concern from the notes); direct the user to
+    "na_k_sbp" for s2.
+
+1e. Emit an LSS audit table the report will consume (data/processed/lss_audit.rds or under
+    output/): one row per country×sex×scenario with baseline sodium, baseline potassium,
+    discretionary sodium share, NaCl/KCl fractions, eligibility group, eligible population
+    share, uptake, adherence, sodium displaced, potassium added, sodium-mediated ΔSBP,
+    potassium-mediated ΔSBP, combined ΔSBP, method, and causes affected. This is the single
+    source of truth for the report's LSS methods/results tables.
+
+======================================================================
+TASK 2 — Fiscal policy model (transparent pathway; exploratory)
+======================================================================
+Current: EFF_FISCAL_PACKAGED = FISCAL_EFFECT_ON_TAXED_PACKAGED (0.10) ×
+TAXABLE_PACKAGED_SHARE (1.00) on the 'packaged' source. The meeting kept it simple and
+anchored on Saxena et al. 2025 (Philippines; PDF provided), and wants sensitivity analysis.
+The report task explicitly forbids implying "10% tax ⇒ 10% sodium reduction" or "all
+packaged sodium is taxable".
+
+2a. Replace the single opaque multiplier with an explicit, still-simple pathway expressed as
+    named constants:
+        tax_rate → pass_through → effective price change → elasticity-based quantity
+        response → substitution adjustment → change in taxable packaged sodium → change in
+        total sodium.
+    Provide base-case values with comments citing Saxena et al. (20% tax; ~10% relative
+    packaged-sodium reduction at yr 20; consumer response dominant, reformulation minor) and
+    a comment noting the uncertainty of applying broad food-category elasticities to
+    high-sodium foods specifically (the peer-review concern). Keep the composition target as
+    the 'packaged' source and the taxable_packaged_share explicit and < 1 configurable.
+
+2b. Sensitivity. Add a FISCAL_SENSITIVITY set of alternative parameter combinations (tax
+    rate, pass-through, elasticity, taxable share, substitution). Wire it so the fiscal
+    scenario is emitted as multiple variants (fiscal_low/base/high or named) in
+    build_scenario_configs(), analogous to LSS; if FISCAL_SENSITIVITY is NULL, behave exactly
+    as a single 'fiscal' scenario. Extend the existing "Fiscal MVP trace" cat() to print each
+    variant's effective packaged reduction, and emit a fiscal_audit table
+    (data/processed/fiscal_audit.rds) with one row per variant containing every parameter
+    above plus the resulting total-sodium change — the report consumes this.
+
+2c. Package membership as a config value. Add include_fiscal_in_package (default = current
+    behaviour: fiscal IS in full_package). build_scenario_configs() must honour it, and the
+    value must be discoverable by the report (write it into a small run-config object, see
+    Task 4/GENERAL). Confirm+comment that fiscal composes with fopl/salt_targets on
+    'packaged' via the existing 1 - prod(1-eff) rule (no double-count). Label all fiscal
+    output as exploratory/provisional.
+
+======================================================================
+TASK 3 — Euromonitor trend: consume Matti's pre-combined per-country trend,
+year-specific source shares, configurable post-2030 rule
+======================================================================
+Current 03_clean_inputs.R reads the OLD workbook, filters to a hardcoded leaf-category list,
+excludes parent categories, and takes a MEDIAN APC per geography → packaged_food_trends.rds.
+07 Task 4b then grows the packaged share to a single 2030 end-state factor and holds it flat.
+Matti's v002 workbook makes most of this obsolete.
+
+3a. Point ingestion at Euromonitor_trends_RTSL_v002.xlsx and CONSUME the pre-combined row
+    (series_category == "Combined selected sodium-sources categories", code 0) as the
+    per-geography trend, instead of re-deriving a median over leaf categories. Pull its apc
+    AND its apc_lcl/apc_ucl so uncertainty is available downstream. Keep a control
+    EUROMONITOR_WINDOW = "predictions" (2025-2030, default) | "observed" (2011-2025) |
+    "post_covid" (2023-2025) selecting which sheet's combined row to use (note observed uses
+    `aapc`, the others `apc`). Map "Vietnam" → "Viet Nam" via name_map. Write
+    packaged_food_trends.rds with columns: location, g (fraction/yr), g_lcl, g_ucl, window.
+    Retain a fallback/toggle EUROMONITOR_RECOMBINE_FROM_LEAVES (default FALSE) that
+    reproduces the old median-over-leaves behaviour, in case we ever need to recompute — but
+    default to Matti's combined row.
+    There is no volume column in v002; if a later workbook adds one, a "volume_weighted"
+    recombine could use it, but do NOT implement volume weighting now — just leave a clearly
+    commented stub and use the combined row.
+
+3b. YEAR-SPECIFIC source shares. Replace the single 2030-end-state factor with a proper
+    year-indexed packaged share. In 07 (or a helper), build a source-share table indexed by
+    (location, year) over the model horizon:
+        base year = a named EUROMONITOR_BASE_YEAR (e.g. 2025),
+        packaged(year) = packaged_base * (1+g)^(year - base_year), then renormalise the
+        other four sources each year so all five sum to 1,
+        apply a configurable packaged-share CEILING (named control) that caps growth,
+        and a post-2030 rule EUROMONITOR_POST2030 = "hold_constant" (default) |
+        "continue_trend" | "converge_to_ceiling".
+    Semantics stay composition-only (total sodium unchanged) unless a toggle says otherwise;
+    default composition-only. Assert all five shares sum to 1 (tol 1e-6) in EVERY
+    (location, year).
+    IMPORTANT: compute_total_efficacy() currently returns a scalar and the downstream
+    salteff is a scalar. Making shares year-specific implies salteff becomes year-varying for
+    packaged-source interventions. Do the smallest change that makes packaged-source
+    reductions use the share for the ACTUAL (country, year) rather than a single value — e.g.
+    resolve the per-year packaged share inside the sodium-impact calc where the year is known,
+    rather than baking one scalar. Preserve exact current results when the trend is flat
+    (g = 0). Explain your approach in a comment and flag any place a scalar salteff is still
+    assumed.
+
+3c. Write a year-specific source-share table the report consumes
+    (data/processed/source_shares_by_year.rds: location, year, the five shares) and a small
+    trend-diagnostic table (per country: base year, baseline packaged share, 2030 share,
+    2050 share, ceiling, post-2030 method, growth-rate source + CI). Keep the run-log delta
+    print.
+
+======================================================================
+TASK 4 — report/report.RMD: reflect all four updates; consume pipeline outputs
+======================================================================
+report.RMD currently contains a SELF-CONTAINED DUPLICATE of the model
+(build_sodium_source_shares(), compute_total_efficacy(), hardcoded SSaSS RRs, the
+0.15/0.33/0.25 constants, STATIC July-8 source shares that don't even match the current
+pipeline, and a single-terminal-packaged-share Euromonitor transform). It reads the OLD
+Euromonitor workbook and presents SSaSS as the sole LSS base case with BP≥140 proxies.
+Rewrite it to consume the pipeline artifacts from Tasks 1e/2b/2c/3c and the run-config, so
+report values reconcile with production. Do NOT maintain a second implementation of the
+model in the report. Specifics:
+
+4a. Scenario registry: derive available scenarios from the actual results + run-config, not a
+    hardcoded vector. Support: baseline, public_procurement, fopl, salt_targets, fiscal
+    (or fiscal_low/base/high), lss_s2/s4/s5 under the primary Na/K–SBP method, an SSaSS
+    trial-RR benchmark scenario if present, full_package. If both LSS methods ran, keep them
+    DISTINCT (separate names or an lss_method field) with clear labels:
+      "LSS—general population (Na/K–SBP)", "LSS—diagnosed hypertension (Na/K–SBP)",
+      "LSS—treated hypertension (Na/K–SBP)", "LSS—SSaSS trial-RR benchmark",
+      "Fiscal policy—exploratory". Omit scenarios not present, with a visible note.
+
+4b. Rewrite the LSS methods section: present Na/K–SBP as primary (show the full pathway and
+    the per-country×sex quantities from lss_audit.rds: baseline Na, baseline K, discretionary
+    share, NaCl/KCl, eligibility, uptake, adherence, Na displaced, K added, Na-ΔSBP, K-ΔSBP,
+    combined ΔSBP, causes affected, additivity). Present SSaSS as a benchmark/sensitivity for
+    SSaSS-comparable populations, retaining the stroke-incidence + conditional-CF
+    decomposition and stating explicitly it is NOT combined with Na/K–SBP. Remove/relabel the
+    now-false statements: SSaSS as sole base case; BP≥140 as diagnosis/treatment proxy; fixed
+    33%/25% coverage; 15% as the main LSS effect (keep only as a labelled sensitivity).
+
+4c. Add an NCD-RisC eligibility subsection consuming htn_eligibility.rds: describe
+    country/sex, ages 30–79, annual to 2019, conditional-on-HTN proportions, 2019 carried
+    forward; show the two eligibility equations (P(diagnosed in pop) = P(HTN)×P(dx|HTN);
+    P(treated in pop) = P(HTN)×P(tx|HTN)); include a country×sex table (country, sex, source
+    year, HTN prevalence, diagnosed|HTN, treated|HTN, diagnosed pop share, treated pop share)
+    with UIs if propagated; add a visible warning/knit failure if any modelled country×sex
+    lacks an eligibility input; state the 30–79 age-standardisation limitation.
+
+4d. Rewrite the fiscal section around the implemented pathway; show the fiscal_audit table
+    (tax rate, pass-through, price change, elasticity, quantity response, taxable share,
+    substitution, reformulation if any, ramp, total-sodium change); label exploratory; drive
+    package-membership narrative/labels/calcs from include_fiscal_in_package (never assume);
+    remove "10% tax ⇒ 10% reduction" / "all packaged taxable" wording; add a fiscal
+    sensitivity table/figure from the configured variants.
+
+4e. Rewrite the Euromonitor section for country- AND year-specific shares: describe base
+    year, per-country growth (with CI + window + that it's Matti's pre-combined
+    sodium-source trend), ceiling, categories/rice-pasta-noodle treatment, post-2030 rule,
+    and that it's composition-only (total sodium unchanged). Replace the single-terminal-share
+    table with a country×selected-year table (baseline share, 2030, 2050, ceiling, post-2030
+    method, growth source) and add a packaged-share-over-time figure by country. Verify shares
+    sum to 1 in every country-year (consume source_shares_by_year.rds).
+
+4f. Remove the duplicated model logic (the `source-logic` chunk): consume
+    source_shares_by_year.rds and the pipeline's efficacy/audit tables instead of
+    re-implementing build_sodium_source_shares()/compute_total_efficacy(). If an illustrative
+    sodium-only LSS bar remains, label it "sodium displacement only — not the full LSS health
+    effect". Ensure any composition figure uses year-specific shares and full-package
+    efficacy uses the SAME multiplicative logic as production (by consuming production
+    outputs, not recomputing).
+
+4g. Results: compute headline numbers from the new output files (no stale inline values):
+    cumulative + annual deaths delayed by scenario; by country; by cause; LSS under Na/K–SBP;
+    Na/K–SBP vs SSaSS benchmark (as a comparison table: country, eligibility group, method,
+    eligible pop share, sodium reduction, potassium increase, SBP change, deaths delayed —
+    NOT treated as identical interventions; explain pathway/population differences); fiscal
+    separately (exploratory); full_package per include_fiscal_in_package; and the existing
+    100M-Lives 30%-sodium benchmark where supported.
+
+4h. Limitations: rewrite to cover NCD-RisC 30–79 age-standardisation (not age-specific);
+    post-2019 dx/tx carried forward; LSS uptake/adherence uncertainty; K→SBP evidence +
+    additivity; Na/K–SBP vs SSaSS applicability; no double-counting between LSS pathways;
+    Euromonitor category defs + post-2030 extrapolation + composition-only assumption;
+    uncertain pass-through/elasticity/taxable-share/substitution + exploratory fiscal status;
+    any parameters whose uncertainty is not propagated. Remove obsolete BP≥140 / fixed-
+    coverage limitations except when describing prior-model comparisons.
+
+4i. Deck export: update saved tables/figures/inline objects to match — source shares OVER
+    TIME, LSS mechanistic pathway + assumptions, NCD-RisC eligibility by country, Na/K–SBP vs
+    SSaSS results, fiscal audit/sensitivity, Euromonitor packaged-share trends, deaths delayed
+    by scenario, full-package composition (per config), 30%-benchmark. Rename/remove deck
+    artifacts whose labels imply obsolete logic.
+
+4j. Reproducibility: resolve paths portably; remove the hard-coded Windows fallback if a
+    project-relative path works; load pipeline inputs/outputs (never re-run the model); fail
+    informatively if required outputs are missing; gracefully omit genuinely optional
+    comparison sections with a visible note; use the configured analysis/impact years, not
+    hardcoded 2017–2050; ensure a clean knit.
+
+======================================================================
+GENERAL / GLUE
+======================================================================
+- Write a single small run-config object (e.g. data/processed/run_config.rds) from
+  07_run_interventions.R capturing the values the report must not re-guess: LSS_METHOD,
+  NaCl/KCl fractions, additivity toggle, HTN_SOURCE_YEAR, FISCAL_SENSITIVITY set,
+  include_fiscal_in_package, EUROMONITOR_WINDOW/BASE_YEAR/ceiling/POST2030,
+  scale-up window, analysis/impact years, and the resolved scenario list. The report reads
+  this instead of hardcoding.
+- Anything a parallel worker touches must be clusterExport-ed (htn_eligibility, new
+  effect/variant tables, year-specific shares or the resolver). Update the clusterExport
+  varlist in SECTION 12.
+- No absolute paths; use wd_raw/wd_data/wd_outp. Preserve existing guards: adults-only
+  public-procurement guard, structural share-sum validation, single-pathway stroke guardrail.
+- Where an assumption is ambiguous (K→SBP slope value, how substitution enters, how to carry
+  NCD-RisC UIs, exact year grid), state it in a comment and pick a documented sensible
+  default rather than stopping.
+
+FINAL STEP (only after the above, and only when I confirm the pipeline has been run once so
+outputs exist):
+  1. Render report/report.RMD to HTML from a clean session.
+  2. Report every warning/error.
+  3. Spot-check that inline values reconcile with the underlying output tables.
+  4. Confirm tables/figures are non-empty and correctly labelled.
+  5. Grep-verify: no BP≥140 dx/tx proxy remains; no text calls SSaSS the sole primary LSS
+     model; no fiscal result stated as confirmed; Euromonitor shares vary by country-year and
+     sum to 1; report full-package membership matches include_fiscal_in_package.
+  6. List the report sections and deck artifacts changed.
+  
+=== REVISION TO TASK 1 (LSS): make the Na/K→SBP pathway concrete, per Filippini +
+Huang et al., using the two newly added inputs. This REPLACES Task 1b and augments
+1a/1e in the previous prompt. ===
+
+Two new inputs are in data/raw/:
+  - Reddin2023_potassium_intake_etable_III_LSS.csv  (columns: region, country, sex,
+      estimate, lower_ci, upper_ci). This is BASELINE POTASSIUM INTAKE in g/day,
+      country × sex (Both/Male/Female), with a GBD-style region column and 95% CIs.
+      NOTE: Viet Nam and Ethiopia are NOT in the file. Per instruction, assign the
+      MEAN of that country's REGION (Viet Nam → "Southeast Asia"; Ethiopia →
+      "Eastern Sub Saharan Africa"), computed sex-specifically, as the fallback —
+      and generalise: any modelled country absent from Reddin gets its region mean
+      (sex-specific). Map country names through name_map (05_build_baseline.R);
+      "Vietnam" → "Viet Nam" etc.
+  - filippini-et-al-2020...pdf  — the K→SBP dose-response meta-analysis (Filippini,
+      JAHA 2020) that Huang et al. (LSS preprint) use for the potassium channel.
+
+1a (augment). In addition to htn_eligibility.rds, build a baseline-potassium input
+    `baseline_potassium` (location × sex: k_intake_g, k_lcl, k_ucl, source =
+    "reddin2023" | "reddin2023_region_fallback"). Emit a diagnostic listing which
+    countries used the region fallback (Viet Nam, Ethiopia expected). saveRDS to
+    data/processed/baseline_potassium.rds. Hard-check every modelled country×sex
+    resolves to a non-NA value (direct or via region mean).
+
+1b (REPLACED). Implement the mechanistic LSS Na/K→SBP pathway as the PRIMARY LSS
+    method (lss_method = "na_k_sbp"), following Huang et al. 2026 and using the
+    Filippini K→SBP dose-response. Do NOT model CKD/hyperkalaemia harms (this model
+    has no CKD channel) — LSS here is BENEFIT-ONLY via SBP; state that explicitly in
+    a comment and in the LSS audit. Pathway, per eligible+reached+adherent person:
+
+      (i)  LSS composition: NaCl/KCl fractions as named constants, default 75% NaCl /
+           25% KCl (SSaSS). When someone switches discretionary salt to LSS, the
+           discretionary-salt sodium they consume is cut by the KCl fraction (25%),
+           and potassium is added stoichiometrically from the KCl.
+      (ii) Sodium channel: the discretionary-sodium reduction feeds the EXISTING
+           Na→SBP dose-response already in calculate_sodium_impact_etihad() (the
+           reach/coverage restriction from Task 1d applies). Keep the WHO floor: no
+           further SBP effect for sodium reduced below 2 g/day.
+      (iii)Potassium channel (NEW): convert baseline K intake (g/day, from
+           baseline_potassium) and the K added by LSS into K EXCRETION in mmol/day
+           (use the Filippini/Huang conventions: mg↔mmol via 39.1 mg/mmol; intake→
+           excretion via the ~1.3 factor Filippini cites — expose both as named
+           constants). Map the change in achieved K excretion to an SBP change using
+           the Filippini "achieved potassium excretion" dose-response, reference
+           90 mmol/day, anchored on these published points (ref = 90 mmol/d, SBP mmHg):
+               30→+9.1, 60→+3.9, 90→0, 120→−0.9, 150→−0.2, 180→+0.7
+           i.e. lowering effect saturating ~90–120 mmol/d and a shallow U beyond.
+           Implement as a documented interpolation (piecewise-linear or monotone
+           spline) over these anchors, evaluated at (baseline vs post-LSS) achieved
+           excretion and differenced. Store the anchors as a small named table so
+           RTSL can swap them. Per Filippini/Huang, the K→SBP effect is STRONGER at
+           higher baseline sodium and in hypertensives — implement the baseline-
+           sodium modulation as Huang did (a named multiplier by baseline-sodium
+           band, defaulting to the un-stratified curve if a band is missing), and
+           allow a toggle LSS_K_NONHTN_ATTENUATION for "no/attenuated K effect in
+           non-hypertensives".
+      (iv) Combine sodium- and potassium-mediated SBP changes ADDITIVELY (named
+           toggle LSS_NAK_ADDITIVE, default TRUE; a companion LSS_ADDITIVITY_FACTOR
+           default 1.0 so the Huang "100%→80%" sensitivity is a one-line change).
+           Feed the COMBINED ΔSBP into the existing ETIHAD/GBD SBP→cause RR machinery
+           (IHD, stroke istroke/hstroke, HHD). Guardrail: for na_k_sbp, the stroke
+           causes are driven by this combined-SBP channel ONLY — never also by the
+           SSaSS trial-RR path (keep the existing single-pathway-per-cause guard).
+
+    Provide, as named/documented constants (with the Filippini/Huang citation in a
+    comment), at minimum: NaCl/KCl fractions, mg-per-mmol, intake→excretion factor,
+    the K→SBP anchor table, the baseline-sodium modulation, uptake, adherence,
+    additivity toggle+factor, and the non-HTN K attenuation toggle. Where a value is
+    genuinely a choice (e.g. adherence), pick the Huang/SSaSS-consistent default
+    (SSaSS yr-5 adherence ≈0.92) and say so in a comment.
+
+1c (unchanged in intent, restate methods names). LSS_METHOD control with values
+    "na_k_sbp" (default/primary) and "ssass_trial_rr" (benchmark). Use these exact
+    strings in outputs so the report can label them
+    ("LSS—…(Na/K–SBP)" vs "LSS—SSaSS trial-RR benchmark"). Keep the guard: if
+    LSS_METHOD == "ssass_trial_rr" AND reach == "all" (scenario 2), stop() (SSaSS RRs
+    not applicable to the whole population). na_k_sbp is valid for all of s2/s4/s5.
+
+1d (unchanged): reach/coverage from NCD-RisC (diagnosed_pop for s4, treated_pop for
+    s5; s2 = LSS_COVERAGE_ALL), replacing the BP≥140 proxy.
+
+1e (augment the LSS audit). The lss_audit table must now include, per
+    country×sex×scenario: baseline sodium, baseline potassium (+source flag: direct
+    vs region-fallback), discretionary sodium share, NaCl/KCl fractions, eligibility
+    group + eligible population share, uptake, adherence, sodium displaced (g/day),
+    potassium added (g/day and mmol/day), sodium-mediated ΔSBP, potassium-mediated
+    ΔSBP, combined ΔSBP, additivity factor, method, causes affected, and an explicit
+    "harms modelled: none (no CKD channel)" flag. This is what the report's LSS
+    methods/results tables and the Na/K–SBP-vs-SSaSS comparison consume.
+
+Cluster/reproducibility: clusterExport baseline_potassium and the K→SBP anchor/param
+tables alongside htn_eligibility. Record the LSS Na/K constants and toggles in
+run_config.rds (Task-4/GENERAL) so report.RMD reads them rather than hardcoding.
+
+Assumptions to state explicitly in comments (pick sensible defaults, don't stop):
+  - unit conversions (39.1 mg/mmol; intake→excretion 1.3) and that K intake in g/day
+    is converted to mmol/day excretion before hitting the Filippini curve;
+  - that LSS discretionary-sodium displacement reuses the existing Na→SBP channel
+    (no separate Na dose-response for LSS);
+  - benefit-only (no hyperkalaemia/CKD), unlike Huang et al., because the disease
+    model has no CKD state — flag as a limitation for report Task 4h;
+  - baseline-sodium band used for the K→SBP modulation comes from the model's
+    existing per-country sodium, and the region-fallback countries (Viet Nam,
+    Ethiopia) inherit region-mean baseline potassium.
+
+Report Task 4 addenda:
+  - 4b: the LSS methods section must present the Na/K–SBP chain end-to-end using the
+    Filippini K→SBP curve (cite Filippini 2020) and state the Huang et al. 2026
+    structure it follows, INCLUDING that this implementation is benefit-only (no
+    CKD/hyperkalaemia), unlike Huang. Show baseline potassium per country×sex from
+    baseline_potassium.rds and flag the Viet Nam/Ethiopia region-fallback rows.
+  - 4h: add limitations — baseline K from Reddin 2023 with region-mean fallback for
+    countries absent from the source (Viet Nam, Ethiopia); K→SBP evidence is sparser
+    than Na→SBP and additivity is assumed; no hyperkalaemia/CKD harm channel (so LSS
+    benefits are not offset as in Huang et al.); K→SBP curve is achieved-excretion
+    based with unit-conversion assumptions.
+	
+

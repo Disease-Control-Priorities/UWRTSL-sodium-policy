@@ -1,0 +1,395 @@
+---
+title: "Plan to Update the Sodium and Low-Sodium Salt Substitute Modeling Pipeline"
+author: "William Garcia"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+  pdf_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Purpose
+
+This document translates the goals in the project email threads and the available model inputs into a practical plan for updating the sodium-policy modeling pipeline. The main substantive change is to model low-sodium salt substitutes (LSS) through explicit changes in sodium and potassium intake. The existing SSaSS trial relative-risk approach should be retained as a benchmark and sensitivity analysis, but it should not operate simultaneously with the sodium/potassium-to-blood-pressure pathway.
+
+The near-term priority is to produce defensible Bloomberg estimates and figures. The pipeline should therefore be updated incrementally, with validation gates that protect the existing production results while the new LSS pathway is introduced.
+
+# Recommended model architecture
+
+The pipeline should follow this sequence:
+
+1. Configure the analysis and register input metadata.
+2. Load and validate raw inputs.
+3. Construct baseline sodium and potassium exposures.
+4. Define intervention scenarios, eligibility, uptake, and scale-up.
+5. Translate interventions into sodium, potassium, and systolic blood pressure (SBP) changes.
+6. Apply mutually exclusive epidemiological effect pathways.
+7. Run the state-transition model.
+8. summarize, benchmark, and validate results.
+9. Run deterministic and probabilistic uncertainty analyses.
+
+The current `07_run_interventions.R` is a useful production foundation, but it mixes configuration, input processing, policy definitions, epidemiological calculations, execution, logging, and output writing. These responsibilities should be separated without changing the underlying state-transition engine until regression tests confirm equivalence.
+
+# Scope and priorities
+
+## Primary priority: LSS sodium/potassium pathway
+
+The primary LSS method should explicitly estimate:
+
+- Sodium displaced from discretionary salt.
+- Potassium added through potassium chloride (KCl).
+- Post-intervention sodium and potassium intake.
+- Sodium-mediated and potassium-mediated changes in SBP.
+- Cause-specific cardiovascular effects mediated through SBP.
+
+## Secondary priority: packaged-food trends
+
+Packaged-food sodium shares should vary by country and year. The current approximation that applies the 2030 share to all years should be replaced by a dynamic composition function.
+
+## Provisional priority: fiscal policy
+
+The fiscal-policy module should remain exploratory until the team confirms the intervention definition and evidence base. It should be modeled transparently as a chain from price to consumption and sodium intake, not as a fixed health-effect estimate.
+
+# Script-by-script update plan
+
+| Script | Recommended responsibility |
+|---|---|
+| `00_run_model.R` | Configuration and orchestration |
+| `01_utils.R` | Generic utilities only |
+| `02_load_inputs.R` | Read raw source files |
+| `03_clean_inputs.R` | Harmonize, impute, validate, and save processed inputs |
+| `04_define_intervention.R` | Pure policy, eligibility, uptake, and exposure-transformation functions |
+| `05_build_baseline.R` | Baseline epidemiology and exposure construction |
+| `06_run_scenarios.R` | Generic state-transition engine |
+| `07_run_interventions.R` | Build the scenario grid and execute runs |
+| `08_summarize_results.R` | Results, benchmarking, tables, and figures |
+| `09_uncertainty.R` | Deterministic and probabilistic sensitivity analyses |
+
+`06_run_scenarios_targets.R` and older scenario runners should be labeled as legacy after the new production runner reproduces their reference outputs.
+
+# Centralize model configuration
+
+`00_run_model.R` should contain, or read from YAML, all assumptions controlled by the analyst:
+
+- Analysis years and reference year.
+- Countries and population groups.
+- Interventions and packages.
+- Scale-up start and target years.
+- LSS composition, initially 75% NaCl and 25% KCl.
+- LSS eligibility and uptake scenarios.
+- LSS epidemiological method: `na_k_sbp` or `ssass_trial_rr`.
+- Packaged-food trend method, ceiling, and post-2030 behavior.
+- Fiscal-policy tax, pass-through, elasticity, taxable-share, and substitution assumptions.
+- Deterministic or probabilistic uncertainty settings.
+- Random seed and number of cores.
+
+The refactor should remove hard-coded Windows paths, hard-coded country lists, fixed calendar years, fixed loop lengths, `rm(list = ls())`, and reliance on global-state side effects.
+
+The immediate production scenario set should include:
+
+1. Baseline.
+2. Each principal sodium intervention separately.
+3. Core sodium-policy package, excluding mass media.
+4. LSS scenario 4: LSS for people with diagnosed hypertension.
+5. LSS scenario 5: LSS for people receiving hypertension treatment.
+6. LSS scenario 2 only under the sodium/potassium pathway.
+7. Fiscal policy separately, clearly labeled exploratory.
+
+# Add potassium to the input pipeline
+
+## Load inputs
+
+Extend `02_load_inputs.R` to load:
+
+- Baseline potassium intake from `Reddin2023_potassium_intake_etable_III_LSS.csv`.
+- Sodium intake and sodium-source shares.
+- Hypertension prevalence, diagnosis, treatment, and control.
+- Euromonitor packaged-food trends.
+- Fiscal-policy parameters.
+- Evidence parameters for sodium-to-SBP, potassium-to-SBP, and SBP-to-CVD relationships.
+
+Preserve the potassium estimate and its lower and upper uncertainty limits.
+
+## Clean and assign potassium values
+
+Extend `03_clean_inputs.R` to:
+
+1. Harmonize country and sex labels.
+2. Match country-specific, sex-specific estimates where available.
+3. Use country estimates for both sexes when sex-specific estimates are unavailable.
+4. Use regional estimates for countries without country estimates.
+5. Use global estimates only as a final fallback.
+6. Convert potassium to a canonical unit, preferably mg/day, while retaining the source unit.
+7. Flag duplicates, unmatched locations, implausible values, and missing uncertainty bounds.
+
+The processed table should contain at least:
+
+| Variable | Purpose |
+|---|---|
+| `location` | Model country name |
+| `sex` | Modeled sex |
+| `potassium_mg_day` | Baseline potassium intake |
+| `potassium_lower` | Lower uncertainty bound |
+| `potassium_upper` | Upper uncertainty bound |
+| `region` | Source region |
+| `imputation_level` | Assignment provenance |
+| `source_id` | Citation or metadata key |
+
+Allowed `imputation_level` values should be `country_sex`, `country_both`, `region_sex`, `region_both`, and `global`.
+
+# Replace the scalar LSS effect with an exposure transformation
+
+The current scalar `EFF_LSS_DISCRETIONARY <- 0.15` is insufficient for the main requested analysis. It should remain only as a simplified sensitivity analysis or calibration target.
+
+Create a pure function in `04_define_intervention.R`:
+
+```{r lss-function}
+calculate_lss_exposure_change <- function(
+  sodium_mg_day,
+  potassium_mg_day,
+  discretionary_share,
+  lss_kcl_fraction,
+  uptake,
+  eligibility,
+  adherence,
+  ramp
+) {
+  # Return baseline and post-policy sodium and potassium exposure,
+  # including delta sodium, delta potassium, and Na:K ratio.
+}
+```
+
+For the population reached, the function should calculate sodium displaced from discretionary salt and potassium added through KCl. Uptake, adherence, eligibility, source share, and scale-up should remain distinct quantities.
+
+Required guardrails are:
+
+- Apply LSS only to discretionary sodium.
+- Prevent negative sodium or potassium intake.
+- Enforce a configurable lower bound for final sodium intake.
+- Do not apply LSS subgroup coverage to the entire sodium-policy package.
+- Retain intermediate exposure values for audit and validation.
+
+# Implement the potassium-to-SBP relationship
+
+Create a separate function such as:
+
+```{r potassium-sbp}
+predict_sbp_change_potassium <- function(
+  baseline_potassium,
+  delta_potassium,
+  baseline_sodium,
+  hypertension_status,
+  antihypertensive_treatment
+) {
+  # Return the potassium-mediated change in SBP.
+}
+```
+
+The preferred implementation is a nonlinear dose-response function based on the Filippini evidence and the attached global LSS modeling study. It should allow effects to differ across:
+
+- People without hypertension.
+- People with hypertension who are untreated.
+- People with hypertension who are treated.
+- Baseline sodium-intake levels.
+
+The practical sequence is:
+
+1. Encode or digitize the relevant nonlinear dose-response coefficients.
+2. Estimate potassium-mediated SBP effects by hypertension and treatment subgroup.
+3. Weight subgroup results using country-specific prevalence, diagnosis, and treatment estimates.
+4. Add sodium- and potassium-mediated SBP effects in the primary analysis.
+5. Include 80% additivity as a sensitivity analysis.
+
+The existing sodium-to-SBP coefficients must retain their own evidence metadata. They should not be attributed to Filippini, whose role is the potassium pathway.
+
+# Make the LSS epidemiological pathways mutually exclusive
+
+The pipeline should support two explicitly named methods:
+
+| Method | Role |
+|---|---|
+| `na_k_sbp` | Primary: sodium and potassium changes to SBP to cause-specific incidence |
+| `ssass_trial_rr` | Benchmark/sensitivity analysis for higher-risk populations |
+
+Under `na_k_sbp`:
+
+- Apply the combined SBP shift to all modeled BP-related causes.
+- Use the existing age- and cause-specific SBP relative risks.
+- Do not apply the SSaSS stroke relative risks.
+
+Under `ssass_trial_rr`:
+
+- Restrict application to populations reasonably comparable to SSaSS.
+- Retain the validated nonfatal- and fatal-stroke decomposition.
+- Do not apply the sodium/potassium SBP effect to stroke in the same run.
+- Identify this method as a benchmark rather than the preferred whole-population scenario.
+
+Add a run-time assertion that stops execution if both pathways affect the same cause-person-year.
+
+# Correct LSS eligibility and coverage
+
+BP bins of at least 140 mmHg should not serve as the final proxy for diagnosed and treated hypertension. Treated people may have SBP below 140 mmHg, while undiagnosed people may have SBP above 140 mmHg.
+
+Use explicit country-specific inputs:
+
+- Scenario 2: general adult population multiplied by household uptake.
+- Scenario 4: diagnosed hypertension prevalence multiplied by LSS uptake.
+- Scenario 5: treated hypertension prevalence multiplied by LSS uptake.
+
+Until these inputs are connected, label the BP-bin method as temporary. Do not publish scenarios 4 and 5 as distinct estimates if they use the same eligibility mechanism. Uptake assumptions should be scenario inputs rather than embedded constants.
+
+# Make packaged-food shares year-specific
+
+Compute country-year packaged shares as:
+
+\[
+s_{packaged,c,t} =
+\frac{s_{packaged,c,0}(1+g_c)^{t-t_0}}
+{s_{packaged,c,0}(1+g_c)^{t-t_0}+1-s_{packaged,c,0}}.
+\]
+
+Renormalize all remaining source shares so they sum to one by country-year. Add configurable:
+
+- Country-specific growth trends.
+- Category inclusion, especially rice, pasta, and noodles.
+- A packaged-sodium ceiling, with 50% treated as a sensitivity assumption.
+- Post-2030 behavior: hold constant, continue trend, or converge toward the ceiling.
+
+`compute_total_efficacy()` should consequently return country-year-specific results rather than one scalar per country.
+
+# Rebuild fiscal policy transparently
+
+Replace the current fixed fiscal effect with the following causal sequence:
+
+\[
+\Delta \text{price}
+\rightarrow \Delta \text{quantity consumed}
+\rightarrow \Delta \text{sodium intake}.
+\]
+
+Model separate inputs for:
+
+- Tax rate.
+- Pass-through.
+- Own-price elasticity.
+- Cross-price and substitution effects.
+- Share of packaged sodium from taxable products.
+- Reformulation, if included.
+- Time required to reach the consumption effect.
+
+Minimum sensitivity analyses should vary tax rate, elasticity, pass-through, taxable share, substitution, and immediate versus gradual response. Because evidence specific to salty foods remains limited, these results should be labeled exploratory and excluded from the principal Bloomberg package unless RTSL confirms otherwise.
+
+# Validation and automated testing
+
+The updated pipeline should include tests confirming that:
+
+- Sodium-source shares sum to one by country-year.
+- Potassium values cover every modeled country-sex combination.
+- Sodium and potassium units are consistent.
+- LSS changes only the discretionary sodium component.
+- Scenario 2 reaches both normotensive and hypertensive populations.
+- Scenario 4 eligibility is at least as large as scenario 5 eligibility.
+- Treated prevalence never exceeds diagnosed prevalence.
+- The `na_k_sbp` and `ssass_trial_rr` pathways never overlap.
+- Intervention effects equal one before scale-up begins.
+- Population balance is maintained.
+- Full-package effects are sub-additive because overlapping effects are composed multiplicatively.
+- Packaged shares remain below the selected ceiling.
+- Setting uptake or efficacy to zero reproduces the baseline.
+
+Regression benchmarks should include:
+
+1. Current pipeline outputs before refactoring.
+2. Current SSaSS trial-RR results.
+3. Direction and approximate magnitude reported by the attached global LSS study.
+4. Philippines fiscal-policy results where comparable.
+5. The earlier 30% sodium-reduction exercise from the 100 Million Lives Saved model.
+
+# Implementation phases and deliverables
+
+## Phase 1: stabilize and configure
+
+- Save reference outputs from the current production pipeline.
+- Centralize configuration, years, paths, country selection, and random seeds.
+- Add input metadata and validation summaries.
+- Remove global-state dependencies.
+
+**Exit criterion:** The refactored pipeline reproduces reference estimates within a predefined numerical tolerance.
+
+## Phase 2: construct the LSS exposure pathway
+
+- Load and harmonize potassium intake.
+- Implement LSS sodium displacement and potassium addition.
+- Connect diagnosed and treated hypertension coverage.
+- Save intermediate exposure-accounting tables.
+
+**Exit criterion:** Exposure changes are complete, directionally correct, and fully traceable for each country, sex, year, and scenario.
+
+## Phase 3: translate exposures into health effects
+
+- Implement the nonlinear potassium-to-SBP function.
+- Combine sodium- and potassium-mediated SBP effects.
+- Enforce mutually exclusive LSS epidemiological methods.
+- Compare the new method with SSaSS trial-RR estimates.
+
+**Exit criterion:** No double counting occurs, and benchmark differences can be explained by population, exposure, and effect-model assumptions.
+
+## Phase 4: update source trends and fiscal policy
+
+- Generate year-specific packaged-food shares.
+- Add ceilings and post-2030 alternatives.
+- Rebuild fiscal policy through price, quantity, and sodium pathways.
+
+**Exit criterion:** Source shares sum to one in every year, and fiscal results respond correctly to changes in price and elasticity parameters.
+
+## Phase 5: uncertainty, benchmarking, and reporting
+
+- Add deterministic scenario analysis and probabilistic uncertainty.
+- Benchmark against the prior 30% sodium-reduction model.
+- Produce deaths-delayed results for each location and the full package.
+- Generate the Bloomberg figures only after all validation gates pass.
+
+**Exit criterion:** Results are reproducible, uncertainty is propagated, and the reporting tables link directly to scenario definitions and evidence metadata.
+
+# Key decisions requiring team confirmation
+
+Before final production runs, confirm:
+
+1. Whether `na_k_sbp` is accepted as the primary LSS method and `ssass_trial_rr` as the benchmark.
+2. The LSS KCl fraction and whether alternative product formulations should be modeled.
+3. Uptake, adherence, and scale-up assumptions for scenarios 2, 4, and 5.
+4. The selected nonlinear potassium-to-SBP specification and additivity assumption.
+5. Whether packaged-food growth stops after 2030 or continues toward a ceiling.
+6. Which food categories are included in the packaged-food trend.
+7. Whether fiscal policy remains outside the principal Bloomberg package.
+8. The uncertainty distributions and number of simulations required for the deliverable.
+
+# Recommended immediate work order
+
+1. Refactor configuration and save regression benchmarks.
+2. Load and validate the potassium dataset.
+3. Implement LSS exposure accounting.
+4. Implement potassium-to-SBP and the combined sodium/potassium pathway.
+5. Replace BP-bin proxies with diagnosis and treatment inputs.
+6. Add dynamic packaged-food shares.
+7. Rebuild fiscal policy as an exploratory module.
+8. Add uncertainty analyses and benchmark outputs.
+9. Produce final Bloomberg tables and figures.
+
+# Final recommendation
+
+The pipeline should make `na_k_sbp` the primary LSS pathway, retain `ssass_trial_rr` as a higher-risk-population benchmark, and programmatically prevent overlap between the two. This design responds directly to the email goals, uses the newly compiled potassium input, improves epidemiological transparency, and preserves the existing trial-based results as a useful validation reference.
