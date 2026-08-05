@@ -61,13 +61,17 @@ run_CF_trend_80   <- TRUE
 
 run_CF_trend_ihme  <- FALSE
 
-# Euromonitor packaged-food consumption trend (Task 4). Applied in
-# 07_run_interventions.R as a change in source COMPOSITION (packaged share
-# grows, other sources renormalise; total intake unchanged). Input is built in
-# 03_clean_inputs.R.
-run_packaged_trend        <- TRUE
-PACKAGED_TREND_METHOD     <- "euromonitor_prediction_apc"  # median APC 2025-2030
-PACKAGED_TREND_AFTER_2030 <- "hold_constant"               # primary analysis
+# Euromonitor packaged-food consumption trend (Tasks 3/4). Applied in
+# 07_run_interventions.R as a change in source COMPOSITION (packaged share grows,
+# other sources renormalise; total intake unchanged), now YEAR-SPECIFIC. Input is
+# built in 03_clean_inputs.R from Matti's v002 workbook's pre-combined per-country
+# row. NB: 03 and 07 also read these via get0() with the same defaults, so a
+# bespoke driver that skips 00 still behaves correctly.
+run_packaged_trend                <- TRUE
+PACKAGED_TREND_METHOD             <- "euromonitor_v002_combined"  # combined-row APC
+PACKAGED_TREND_AFTER_2030         <- "hold_constant"             # -> EUROMONITOR_POST2030
+EUROMONITOR_WINDOW                <- "predictions"  # "predictions" | "observed" | "post_covid"
+EUROMONITOR_RECOMBINE_FROM_LEAVES <- FALSE          # TRUE = legacy median-over-leaves
 
 # Remove unnecessary dx
 
@@ -92,7 +96,7 @@ cause_cols <- names(cause_map)
 # 02. Load inputs-----
 #...........................................................
 
-source("02_load_inputs.R")
+source(paste0(wd_code,"02_load_inputs.R"))
 
 #...........................................................
 # 03. Clean and process inputs-----

@@ -103,25 +103,12 @@ data.in<-merge(bpcats, data.in)%>%rename(bp_cat = x)
 data.in <- as.data.table(data.in)
 # Fixes location names
 
-name_map <- c(
-  "Brunei"                            = "Brunei Darussalam",
-  "Cape Verde"                        = "Cabo Verde",
-  "Cote d'Ivoire"                     = "Ivory Coast",
-  "Czech Republic"                    = "Czechia",
-  "Federated States of Micronesia"    = "Micronesia (Federated States of)",
-  "Iran"                              = "Iran (Islamic Republic of)",
-  "Laos"                              = "Lao People's Democratic Republic",
-  "Macedonia"                         = "North Macedonia",
-  "Moldova"                           = "Republic of Moldova",
-  "South Korea"                       = "Republic of Korea",
-  "Swaziland"                         = "Eswatini",
-  "Syria"                             = "Syrian Arab Republic",
-  "The Bahamas"                       = "Bahamas",
-  "The Gambia"                        = "Gambia",
-  "Venezuela"                         = "Venezuela (Bolivarian Republic of)",
-  "Vietnam"                           = "Viet Nam",
-  "North Korea"                       = "Democratic People's Republic of Korea"
-)
+# name_map is now defined ONCE in 01_utils.R (sourced first) so the Task-1a input
+# builders reuse the SAME raw->model mapping. Reuse it here; fail loudly if 01 was
+# not sourced (the pipeline always sources 01 before 05).
+if (!exists("name_map")) {
+  stop("name_map not found - source 01_utils.R before 05_build_baseline.R.")
+}
 
 # 3. update your data.in in place, using fcoalesce() so that
 #    any location not in name_map stays unchanged

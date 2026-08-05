@@ -37,16 +37,27 @@ library(readxl)   # benchmark import (100 Million Lives Saved workbook)
 ```
 
 ```{r paths, message=FALSE, warning=FALSE, echo=FALSE}
-# Single source of truth for paths (mirrors the RTSL assessment report). The
-# project root is resolved relative to this .Rmd (scenarios/ is one level below
-# the repo root) so the report knits on any machine; a hard-coded fall-back is
-# used when the file is run chunk-by-chunk outside of knit.
-wd <- tryCatch({
-  root <- normalizePath(file.path(dirname(knitr::current_input(dir = TRUE)), ".."),
-                        winslash = "/", mustWork = TRUE)
-  paste0(root, "/")
-}, error = function(e)
-  "C:/Users/wrgar/OneDrive - UW/02Work/ResolveToSaveLives/SodiumPolicy/github/UWRTSL-sodium-policy/")
+# Portable project-root resolution (Task 4j: no hard-coded machine path). The
+# repo root is reports/'s parent; resolved relative to this .Rmd when knitting,
+# and by ascending from the working directory when run chunk-by-chunk. Fails
+# informatively if it cannot be found.
+.find_root <- function(start) {
+  d <- normalizePath(start, winslash = "/", mustWork = FALSE)
+  for (i in 1:6) {
+    if (dir.exists(file.path(d, "data", "processed")) &&
+        dir.exists(file.path(d, "code"))) return(d)
+    parent <- dirname(d); if (parent == d) break; d <- parent
+  }
+  NA_character_
+}
+wd <- tryCatch(
+  normalizePath(file.path(dirname(knitr::current_input(dir = TRUE)), ".."),
+                winslash = "/", mustWork = TRUE),
+  error = function(e) .find_root(getwd()))
+if (is.na(wd) || !dir.exists(file.path(wd, "data", "processed")))
+  stop("Could not locate the project root (a dir containing data/processed/ and code/). ",
+       "Set `wd` manually or knit from within the repo.")
+wd <- paste0(sub("/+$", "", wd), "/")
 
 wd_data <- paste0(wd, "data/processed/")
 wd_outp <- paste0(wd, "output/")
@@ -80,59 +91,14 @@ cause_cols <- c(
 )
 
 # ---- Scenario metadata -------------------------------------------------------
-# The intervention model writes a 'scenario' column that is authoritative:
-#   baseline + one row per individual intervention + full_package.
-# (The 'intervention' column is only a binary arm flag - Baseline vs
-#  "Sodium reduction" - and must NOT be used to distinguish scenarios.)
-# Reported scenarios now mirror code/07_run_interventions.R exactly:
-# media_campaign is retained in the registry but EXCLUDED from reported
-# scenarios (July 14 decision), and LSS runs as three explicit variants
-# (scenarios 2/4/5) via the SSaSS trial-RR pathway rather than a single 'lss'.
-scenario_levels <- c("baseline", "public_procurement", "fopl",
-                     "salt_targets", "fiscal",
-                     "lss_s2", "lss_s4", "lss_s5", "full_package")
-
-scenario_labels <- c(
-  baseline           = "Baseline (no intervention)",
-  public_procurement = "Public food procurement & service",
-  fopl               = "Front-of-pack labelling (FOPL)",
-  salt_targets       = "Salt targets (reformulation)",
-  fiscal             = "Fiscal policy (salt tax)",
-  lss_s2             = "LSS sc. 2 (whole-population)",
-  lss_s4             = "LSS sc. 4 (diagnosed HTN)",
-  lss_s5             = "LSS sc. 5 (treated HTN)",
-  full_package       = "Full package"
-)
-
-# Short labels for compact axes / legends
-scenario_labels_short <- c(
-  baseline           = "Baseline",
-  public_procurement = "Public procurement",
-  fopl               = "FOPL",
-  salt_targets       = "Salt targets",
-  fiscal             = "Fiscal",
-  lss_s2             = "LSS s2 (all)",
-  lss_s4             = "LSS s4 (dx HTN)",
-  lss_s5             = "LSS s5 (tx HTN)",
-  full_package       = "Full package"
-)
-
-scenario_cols <- c(
-  baseline           = "#999999",
-  public_procurement = "#1f78b4",
-  fopl               = "#ff7f00",
-  salt_targets       = "#e31a1c",
-  fiscal             = "#6a3d9a",
-  lss_s2             = "#8c510a",   # LSS family (three shades of brown)
-  lss_s4             = "#bf812d",
-  lss_s5             = "#dfc27d",
-  full_package       = "#000000"
-)
-
-# Non-baseline scenarios, in canonical order (individuals then package)
-scenario_nb <- setdiff(scenario_levels, "baseline")
-
-as_scn_factor <- function(x) factor(x, levels = scenario_levels)
+# NOTE: scenario_levels / scenario_labels / scenario_cols / as_scn_factor are NO
+# LONGER hardcoded here. They are derived from run_config.rds (the pipeline's
+# resolved scenario registry) intersected with the scenarios actually present in
+# the outputs, in the `scenario-metadata` chunk AFTER run_config + outputs load
+# (Task 4a). This guarantees the report's scenario set reconciles with production
+# (na_k_sbp LSS variants, the SSaSS benchmark, fiscal sensitivity variants, and
+# full-package membership per include_fiscal_in_package) instead of a stale
+# hand-maintained vector.
 
 # ---- WHO standard population (ages 20-95+) for ASMR -------------------------
 full_who_std <- data.table(
@@ -186,205 +152,86 @@ deaths_delayed_by <- function(dt, by = character(0),
 }
 ```
 
-```{r source-logic, message=FALSE, warning=FALSE, echo=FALSE}
-# Self-contained copy of the source-split efficacy logic from
-# code/07_run_interventions.R (Section 3). Reproduced here verbatim so this
-# report can display the source-share, effect-size and salteff tables WITHOUT
-# depending on run-time globals - it stands alone on the .rds outputs.
-
-SODIUM_SOURCES     <- c("discretionary", "packaged", "restaurant", "public", "inherent")
-TARGETABLE_SOURCES <- setdiff(SODIUM_SOURCES, "inherent")
-
-# Effect-size constants (relative reduction applied to the target source).
-# Source: RTSL sodium policy document intervention effect-size tables.
-EFF_PROCUREMENT_PUBLIC   <- 0.20   # Public food procurement & service -> 'public'
-EFF_MEDIA                <- 0.010  # Media campaigns -> 'discretionary' + 'packaged'
-EFF_FOPL_PACKAGED        <- 0.138  # Front-of-pack labelling -> 'packaged'
-EFF_SALTTARGETS_PACKAGED <- 0.20   # Salt targets (reformulation) -> 'packaged'
-# Fiscal policy / salt tax -> 'packaged'. Provisional MVP: a fixed base-case
-# effect on the TAXED portion of packaged sodium (mirrors code/07). The
-# country-specific Green-et-al price-elasticity model is future work, so both
-# factors are surfaced explicitly rather than buried in one constant.
-FISCAL_EFFECT_ON_TAXED_PACKAGED <- 0.10  # provisional effect on taxed packaged (RTSL to confirm)
-TAXABLE_PACKAGED_SHARE          <- 1.00  # assumed taxable-packaged share (RTSL to confirm; 1.00 likely high)
-EFF_FISCAL_PACKAGED      <- FISCAL_EFFECT_ON_TAXED_PACKAGED * TAXABLE_PACKAGED_SHARE
-EFF_LSS_DISCRETIONARY    <- 0.15   # LSS sodium->SBP SENSITIVITY path only (see below)
-# LSS in the reported scenarios uses the SSaSS TRIAL-RR pathway (Neal et al.,
-# NEJM 2021;385:1067-77), which DOES capture the potassium-mediated benefit:
-#   - incidence RR 0.90 on stroke causes (istroke + hstroke),
-#   - conditional case-fatality multiplier 0.77/0.90 = 0.856 on stroke CF.
-# So for LSS scenarios case fatality is NO LONGER held at baseline. The 0.15
-# discretionary-sodium reduction above is retained ONLY as the documented
-# sodium->SBP SENSITIVITY value (never combined with the trial-RR path); it is
-# what the illustrative salteff tables show for LSS. The trial-RR constants are
-# surfaced to the deck below (LSS_RR_STROKE_INC / LSS_CF_MULT).
-LSS_RR_STROKE_INC <- 0.90              # SSaSS nonfatal-stroke incidence RR
-LSS_CF_MULT       <- 0.77 / 0.90       # conditional stroke case-fatality multiplier (= 0.856)
-LSS_STROKE_TOTAL  <- 0.86              # total-stroke RR (= 0.90 x 0.856; NOT applied separately)
-# Provisional coverage assumptions (mirror code/07; RTSL/HEARTS to confirm).
-LSS_COVERAGE_ALL  <- 0.50              # scenario 2 whole-population uptake (manually adjustable)
-HTN_DIAGNOSED_COV <- 0.33              # scenario 4 diagnosed-HTN coverage (HEARTS-linked)
-HTN_TREATED_COV   <- 0.25              # scenario 5 treated-HTN coverage
-
-intervention_effects <- data.table(
-  intervention = c("public_procurement",
-                   "media_campaign", "media_campaign",
-                   "fopl", "salt_targets", "fiscal", "lss"),
-  source = c("public",
-             "discretionary", "packaged",
-             "packaged", "packaged", "packaged", "discretionary"),
-  effect = c(EFF_PROCUREMENT_PUBLIC,
-             EFF_MEDIA, EFF_MEDIA,
-             EFF_FOPL_PACKAGED, EFF_SALTTARGETS_PACKAGED,
-             EFF_FISCAL_PACKAGED, EFF_LSS_DISCRETIONARY)
-)
-
-intervention_registry <- data.table(
-  intervention = c("public_procurement", "media_campaign", "fopl",
-                   "salt_targets", "fiscal", "lss"),
-  label        = c("Public food procurement & service",
-                   "Behaviour change / media campaigns",
-                   "Front-of-pack labelling (FOPL)",
-                   "Salt targets (reformulation)",
-                   "Fiscal policy (salt tax)",
-                   "Low-sodium salt substitutes (LSS)"),
-  # Mirrors code/07_run_interventions.R: LSS is a placeholder (its subgroup +
-  # trial-RR implementation runs as SEPARATE scenarios and is NOT folded into
-  # the combined package), and media_campaign is retained here but excluded from
-  # reported scenarios. So the reported full package is the four non-placeholder,
-  # non-media policies (see package_interventions below).
-  placeholder  = c(FALSE, FALSE, FALSE, FALSE, FALSE, TRUE)
-)
-
-# Per-country sodium source-share table (+ 'default' row), renormalised to 1.0.
-# Mirrors build_sodium_source_shares() in code/07_run_interventions.R verbatim:
-# all TEN prioritised countries, including Nigeria and Cameroon (provisional
-# shares supplied by RTSL/Matti on 8 Jul 2026, bouillon + condiments counted as
-# packaged; Nigeria is used as a proxy for Cameroon).
-build_sodium_source_shares <- function() {
-  shares_raw <- data.table(
-    location      = c("Viet Nam", "Philippines", "Bangladesh", "China",
-                      "Ethiopia", "India", "Malaysia", "Thailand",
-                      "Nigeria", "Cameroon"),
-    discretionary = c(0.109, 0.320, 0.738, 0.594, 0.783, 0.738, 0.320, 0.235,
-                      0.231, 0.231),
-    packaged      = c(0.641, 0.430, 0.062, 0.173, 0.017, 0.062, 0.430, 0.141,
-                      0.415, 0.415),
-    restaurant    = c(0.100, 0.100, 0.050, 0.083, 0.050, 0.050, 0.100, 0.473,
-                      0.205, 0.205),
-    public        = c(0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050,
-                      0.050, 0.050),
-    inherent      = c(0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100, 0.100,
-                      0.100, 0.100)
-  )
-  # Malaysia uses the Philippines source profile as a proxy (per document).
-  default_row <- shares_raw[, lapply(.SD, mean), .SDcols = SODIUM_SOURCES]
-  default_row[, location := "default"]
-  setcolorder(default_row, c("location", SODIUM_SOURCES))
-  shares <- rbind(shares_raw, default_row, use.names = TRUE)
-  rs <- rowSums(shares[, ..SODIUM_SOURCES])
-  shares[, (SODIUM_SOURCES) := lapply(.SD, function(x) x / rs), .SDcols = SODIUM_SOURCES]
-  shares[]
+```{r load-artifacts, message=FALSE, warning=FALSE, echo=FALSE}
+# Task 4f: the report NO LONGER re-implements the model. It CONSUMES the pipeline
+# artifacts written by code/07_run_interventions.R (plus 01/03). Everything the
+# report must not re-guess is read from run_config.rds. Missing artifacts fail
+# informatively (Task 4j).
+.need <- function(f, what) {
+  p <- paste0(wd_data, f)
+  if (!file.exists(p)) stop(sprintf(
+    "Required pipeline artifact missing:\n  %s\n  (%s)\n  Run code/07_run_interventions.R first.",
+    p, what))
+  x <- readRDS(p); if (is.data.frame(x)) setDT(x); x
 }
+run_config            <- .need("run_config.rds",            "run configuration + scenario registry")
+RC                    <- run_config
+source_shares_by_year <- .need("source_shares_by_year.rds", "Task 3 year-specific source shares")
+lss_audit             <- .need("lss_audit.rds",             "Task 1e LSS mechanistic audit")
+fiscal_audit          <- .need("fiscal_audit.rds",          "Task 2 fiscal pathway audit")
+htn_eligibility       <- .need("htn_eligibility.rds",       "Task 1a NCD-RisC eligibility")
+baseline_potassium    <- .need("baseline_potassium.rds",    "Task 1a baseline potassium")
+packaged_trend_diag   <- tryCatch(readRDS(paste0(wd_data, "packaged_trend_diagnostic.rds")),
+                                  error = function(e) NULL)   # optional
 
-# Collapse a set of interventions to a single total-intake reduction fraction
-# (the 'salteff') for one country.
+# ---- Authoritative source-split inputs (NOT re-derived here) ----------------
+SODIUM_SOURCES       <- RC$sodium_sources
+intervention_effects <- as.data.table(RC$intervention_effects)   # published effect sizes
+source_shares        <- as.data.table(RC$source_shares_base)     # documented base-year shares
+
+# Presentation-only colours/labels for the five sources.
+source_cols   <- c(discretionary = "#4E79A7", packaged = "#F28E2B",
+                   restaurant = "#59A14F", public = "#E15759", inherent = "#B07AA1")
+source_labels <- c(discretionary = "Discretionary", packaged = "Packaged",
+                   restaurant = "Restaurant", public = "Public", inherent = "Inherent")
+
+# DISPLAY-ONLY salteff resolver: the pipeline's documented composition formula
+# [salteff = sum_s share_s x (1 - prod_i(1 - eff_i,s))] fed by the PUBLISHED
+# effect sizes (RC$intervention_effects) and shares. This presents the SAME
+# formula the model uses; all inputs are authoritative, so it cannot diverge from
+# production (Task 4f: no second model).
 compute_total_efficacy <- function(intervention_names, country,
-                                   source_shares, intervention_effects) {
-  sources <- SODIUM_SOURCES
-  srow <- source_shares[location == country]
-  if (nrow(srow) == 0L) srow <- source_shares[location == "default"]
-  if (nrow(srow) == 0L) stop("No source shares for '", country, "' and no default.")
-  shares_vec <- unlist(srow[1L, ..sources])
-
+                                    shares = source_shares, effects = intervention_effects) {
+  srow <- shares[location == country]
+  if (nrow(srow) == 0L) srow <- shares[location == "default"]
+  if (nrow(srow) == 0L) stop("No source shares for '", country, "'.")
+  sv <- unlist(srow[1L, ..SODIUM_SOURCES])
   if (is.null(intervention_names) || length(intervention_names) == 0L) {
-    total <- 0
-    attr(total, "decomposition") <-
-      data.table(source = sources, share = shares_vec[sources],
-                 composed_effect = 0, contribution = 0)
-    return(total)
+    t <- 0
+    attr(t, "decomposition") <- data.table(source = SODIUM_SOURCES, share = sv,
+                                            composed_effect = 0, contribution = 0)
+    return(t)
   }
-  eff <- intervention_effects[intervention %in% intervention_names]
-  composed <- vapply(sources, function(s) {
-    e <- eff[source == s, effect]
-    if (length(e) == 0L) 0 else 1 - prod(1 - e)
-  }, numeric(1))
-  dec <- data.table(source = sources, share = shares_vec[sources],
-                    composed_effect = composed[sources],
-                    contribution = shares_vec[sources] * composed[sources])
-  total <- sum(dec$contribution)
-  attr(total, "decomposition") <- dec[]
-  total
+  eff  <- effects[intervention %in% intervention_names]
+  comp <- vapply(SODIUM_SOURCES, function(s) {
+    e <- eff[source == s, effect]; if (!length(e)) 0 else 1 - prod(1 - e) }, numeric(1))
+  dec <- data.table(source = SODIUM_SOURCES, share = sv,
+                    composed_effect = comp[SODIUM_SOURCES],
+                    contribution = sv * comp[SODIUM_SOURCES])
+  t <- sum(dec$contribution); attr(t, "decomposition") <- dec[]; t
 }
 
-source_shares <- build_sodium_source_shares()
+# Year-specific salteff for display (reads the published YEAR-share table).
+report_salteff_year <- function(intervention_names, country, yr) {
+  ssy <- source_shares_by_year[location == country & year == yr]
+  if (!nrow(ssy)) ssy <- source_shares_by_year[location == "default" & year == yr]
+  compute_total_efficacy(intervention_names, country,
+                         shares = ssy[, c("location", SODIUM_SOURCES), with = FALSE])
+}
 
-# Colours / labels for the five sodium sources (used by the source-share and
-# salteff stacked barplots).
-source_cols <- c(
-  discretionary = "#4E79A7",
-  packaged      = "#F28E2B",
-  restaurant    = "#59A14F",
-  public        = "#E15759",
-  inherent      = "#B07AA1"
-)
-source_labels <- c(
-  discretionary = "Discretionary",
-  packaged      = "Packaged",
-  restaurant    = "Restaurant",
-  public        = "Public",
-  inherent      = "Inherent"
-)
-
-# The reported full package, matching code/07_run_interventions.R
-# (include_placeholders_in_package <- FALSE, media not selected): the four
-# non-placeholder, non-media policies. LSS runs only as its own scenarios 2/4/5.
-include_placeholders_in_package <- FALSE
-package_interventions <- c("public_procurement", "fopl", "salt_targets", "fiscal")
-
-# Map each scenario -> its intervention vector (baseline = none). The three LSS
-# variants all carry the single 'lss' intervention (their reach/coverage/method
-# differ upstream in code/07, not in the source-split efficacy). A bare 'lss'
-# key is also kept for the illustrative salteff tables/figures, which show LSS
-# ONCE as its sodium->SBP-path value.
-scenario_interventions <- c(
-  setNames(as.list(intervention_registry$intervention),
-           intervention_registry$intervention),
-  list(baseline     = character(0),
-       lss_s2       = "lss",
-       lss_s4       = "lss",
-       lss_s5       = "lss",
-       full_package = package_interventions)
-)
-
-# Scenarios shown in the ILLUSTRATIVE salteff tables/figures (Tables M3-M4,
-# fig_salteff*). LSS appears once here as its sodium->SBP-path value (a
-# documented sensitivity), decoupled from the three reported LSS RESULT
-# scenarios which use the SSaSS trial-RR pathway.
-salteff_scenarios <- c("public_procurement", "fopl", "salt_targets", "fiscal",
-                       "lss", "full_package")
-salteff_labels_short <- c(
-  public_procurement = "Public procurement",
-  fopl               = "FOPL",
-  salt_targets       = "Salt targets",
-  fiscal             = "Fiscal",
-  lss                = "LSS (Na-path)",
-  full_package       = "Full package"
-)
-
-#' Resolve a country's five source shares to a named numeric vector, falling
-#' back to the 'default' row for any country without documented shares (all ten
-#' prioritised countries now have their own row). Keeps the barplots robust.
-resolve_source_shares <- function(countries,
-                                  shares = source_shares) {
+resolve_source_shares <- function(countries, shares = source_shares) {
   rbindlist(lapply(countries, function(cc) {
-    srow <- shares[location == cc]
-    if (nrow(srow) == 0L) srow <- shares[location == "default"]
-    srow <- copy(srow[1L])
-    srow[, location := cc]
-    srow[]
-  }))
+    srow <- shares[location == cc]; if (!nrow(srow)) srow <- shares[location == "default"]
+    srow <- copy(srow[1L]); srow[, location := cc]; srow[] }))
 }
+
+# LSS config from run_config (na_k_sbp PRIMARY; SSaSS a benchmark). The SSaSS
+# trial RRs are surfaced for the benchmark section / deck only -- NOT as the sole
+# primary LSS model.
+LSS_COVERAGE_ALL  <- RC$lss$coverage_all
+LSS_RR_STROKE_INC <- 0.90            # SSaSS nonfatal-stroke incidence RR (benchmark)
+LSS_CF_MULT       <- 0.77 / 0.90     # SSaSS conditional stroke CF multiplier (= 0.856)
+LSS_STROKE_TOTAL  <- 0.86            # SSaSS total-stroke RR (= 0.90 x 0.856)
 ```
 
 ```{r country-metadata, message=FALSE, warning=FALSE, echo=FALSE}
@@ -431,9 +278,62 @@ data.out <- rbindlist(
 )
 data.out <- data.out[!is.na(location) & !is.na(scenario)]
 
-# Keep only recognised scenarios and impose canonical ordering. The three LSS
-# variants (lss_s2/lss_s4/lss_s5) emitted by code/07 are retained as-is;
-# media_campaign is not emitted (excluded from reported scenarios).
+# ---- Scenario registry, DERIVED from run_config (Task 4a) -------------------
+# The scenario set, labels, methods and full-package membership all come from
+# the pipeline's resolved registry (RC$scenarios) intersected with the scenarios
+# actually present in the outputs. No hardcoded vector. Scenarios in the registry
+# but absent from the outputs are noted; scenarios in the outputs but not the
+# registry are dropped with a warning.
+scn_reg <- as.data.table(RC$scenarios)
+present <- unique(as.character(data.out$scenario))
+scenario_levels <- scn_reg$scenario[scn_reg$scenario %in% present]   # canonical order
+missing_from_out <- setdiff(scn_reg$scenario, present)
+extra_in_out     <- setdiff(present, scn_reg$scenario)
+if (length(extra_in_out))
+  warning("Output scenarios not in run_config registry (dropped): ",
+          paste(extra_in_out, collapse = ", "))
+
+scenario_labels <- setNames(scn_reg$label, scn_reg$scenario)
+scenario_labels[is.na(scenario_labels) | scenario_labels == ""] <-
+  names(scenario_labels)[is.na(scenario_labels) | scenario_labels == ""]
+
+# Compact labels for axes / legends.
+short_lab <- function(s) {
+  m <- c(baseline = "Baseline", public_procurement = "Public procurement",
+         fopl = "FOPL", salt_targets = "Salt targets", full_package = "Full package",
+         fiscal = "Fiscal", fiscal_low = "Fiscal (low)", fiscal_base = "Fiscal (base)",
+         fiscal_high = "Fiscal (high)",
+         lss_s2 = "LSS s2 all (Na/K)", lss_s4 = "LSS s4 dx (Na/K)",
+         lss_s5 = "LSS s5 tx (Na/K)", lss_s4_ssass = "LSS s4 SSaSS",
+         lss_s5_ssass = "LSS s5 SSaSS")
+  ifelse(s %in% names(m), m[s], s)
+}
+scenario_labels_short <- setNames(short_lab(scenario_levels), scenario_levels)
+
+# Colours: fixed hues for the core families, generated for any extras.
+.base_cols <- c(baseline = "#999999", public_procurement = "#1f78b4", fopl = "#ff7f00",
+                salt_targets = "#e31a1c", fiscal = "#6a3d9a", fiscal_low = "#9e9ac8",
+                fiscal_base = "#6a3d9a", fiscal_high = "#3f007d",
+                lss_s2 = "#8c510a", lss_s4 = "#bf812d", lss_s5 = "#dfc27d",
+                lss_s4_ssass = "#01665e", lss_s5_ssass = "#5ab4ac", full_package = "#000000")
+scenario_cols <- .base_cols[scenario_levels]
+if (any(is.na(scenario_cols))) {
+  miss <- scenario_levels[is.na(scenario_cols)]
+  scenario_cols[is.na(scenario_cols)] <- scales::hue_pal()(length(miss))
+}
+names(scenario_cols) <- scenario_levels
+
+as_scn_factor <- function(x) factor(as.character(x), levels = scenario_levels)
+scenario_nb   <- setdiff(scenario_levels, "baseline")
+
+# scenario -> intervention vector (baseline = none), from the registry.
+scenario_interventions <- setNames(lapply(scn_reg$scenario, function(s) {
+  iv <- scn_reg[scenario == s, interventions]
+  if (is.na(iv) || iv == "") character(0) else trimws(strsplit(iv, "\\+")[[1]])
+}), scn_reg$scenario)
+package_interventions <- scenario_interventions[["full_package"]]
+
+# Keep only registry scenarios present in outputs; impose canonical order.
 data.out <- data.out[scenario %in% scenario_levels]
 data.out[, scenario := as_scn_factor(scenario)]
 
@@ -459,15 +359,28 @@ year_max    <- max(data.out$year, na.rm = TRUE)
 study_years <- paste0(year_min, "–", year_max)
 scenarios_present <- levels(droplevels(data.out$scenario))
 
-# Scale-up window (as configured in 07_run_interventions.R).
-SCALEUP_YEAR1 <- 2026
-SCALEUP_YEAR2 <- 2030
-
-# Impact-accounting window for the headline results.
+# Scale-up + impact window from run_config (Task 4j: configured years, not hardcoded).
+SCALEUP_YEAR1 <- RC$scaleup_window[1]
+SCALEUP_YEAR2 <- RC$scaleup_window[2]
+impact_years  <- RC$impact_years
 impact_y1 <- SCALEUP_YEAR1
-impact_y2 <- min(2050, year_max)
+impact_y2 <- min(RC$analysis_years[2], year_max)
 impact_window <- paste0(impact_y1, "–", impact_y2)
 n_impact_years <- impact_y2 - impact_y1 + 1
+
+# Illustrative-salteff display set (the DISTINCT policies, LSS shown once as its
+# sodium-displacement composition; fiscal at its base case). Used by the methods
+# salteff tables/figures only.
+salteff_display <- list(
+  public_procurement = "public_procurement", fopl = "fopl",
+  salt_targets = "salt_targets", fiscal = "fiscal", lss = "lss",
+  full_package = package_interventions)
+salteff_display <- salteff_display[vapply(salteff_display, function(iv)
+  all(iv %in% intervention_effects$intervention) || length(iv) == 0, logical(1))]
+salteff_scenarios     <- names(salteff_display)
+salteff_labels_short  <- c(public_procurement = "Public procurement", fopl = "FOPL",
+  salt_targets = "Salt targets", fiscal = "Fiscal (base)",
+  lss = "LSS (Na displacement)", full_package = "Full package")[salteff_scenarios]
 ```
 
 ---
@@ -523,33 +436,41 @@ cardiovascular deaths relative to baseline. Individual interventions and the
 by-cause decomposition are given in the [results](#main-results-deaths-delayed).
 
 > **A note on terminology.** For the **sodium→SBP** interventions (public
-> procurement, FOPL, salt targets, fiscal), the intervention lowers disease
-> *incidence* while case fatality is held at its baseline value, so the model
-> shifts deaths later in time rather than removing them from the life table
-> entirely. We therefore report **deaths delayed** (baseline deaths − scenario
-> deaths within the window) rather than "deaths averted". **The one exception is
-> LSS**, whose SSaSS trial-RR pathway also lowers stroke **case fatality**
-> (multiplier 0.856), so LSS scenarios deliver some genuinely *averted* deaths;
-> we still report them under the common "deaths delayed" heading for
-> comparability.
+> procurement, FOPL, salt targets, fiscal, and the **primary Na/K→SBP LSS**
+> method), the intervention lowers disease *incidence* while case fatality is
+> held at its baseline value, so the model shifts deaths later in time rather
+> than removing them from the life table entirely. We therefore report **deaths
+> delayed** (baseline deaths − scenario deaths within the window) rather than
+> "deaths averted". **The exception is the optional SSaSS trial-RR benchmark**,
+> which also lowers stroke **case fatality** (multiplier 0.856) and so delivers
+> some genuinely *averted* deaths; we still report everything under the common
+> "deaths delayed" heading for comparability.
 
 ---
 
 # Model inputs
 
-The report reads only the per-country `.rds` outputs; the inputs below are those
-consumed *upstream* by `07_run_interventions.R` (via `05_build_baseline.R`) and
-are described here for provenance.
+This report **consumes the pipeline's published artifacts** (it does not re-run
+or re-implement the model). The run configuration and every derived input are
+read from `data/processed/`; the modelling inputs are consumed *upstream* by
+`07_run_interventions.R` (via `05_build_baseline.R`) and are described here for
+provenance.
 
 | Input | File | Role |
 |---|---|---|
+| Run configuration | `run_config.rds` | LSS method + Na/K constants, HTN source year, fiscal sensitivity + package membership, Euromonitor window/base year/ceiling/post-2030, scale-up + impact years, and the **resolved scenario registry**. The report reads these rather than re-guessing. |
 | Baseline transition rates | `*adjusted*.rds` → `b_rates` | Age × sex × year × cause incidence (IR), case fatality (CF), background mortality (BG.mx, BG.mx.all), COVID excess (covid.mx), prevalence and population (Nx). |
-| BP distribution | `bp_data6.csv` → `data.in` | Mean/SD systolic BP by age × sex, raised-BP fraction, diabetes prevalence; the baseline sodium column `salt`. |
+| BP distribution | `bp_data6.csv` → `data.in` | Mean/SD systolic BP by age × sex, raised-BP fraction, diabetes prevalence; the baseline sodium column `salt` (g **sodium**/day). |
 | Baseline sodium intake | `sodium_policy_scenarios.rds` | 2024 mean sodium intake (`sodium_current`) merged in as `salt`. |
-| Sodium source shares | recomputed in-report (also `sodium_source_shares.rds`) | Five-source split of baseline sodium per country. |
+| Sodium source shares (year-specific) | `source_shares_by_year.rds` | Five-source split of baseline sodium per country **and year** (packaged share follows the Euromonitor trend; the other four renormalise; composition-only). |
+| NCD-RisC hypertension eligibility | `htn_eligibility.rds` | Age-standardised 30–79 diagnosed/treated proportions → population eligibility shares that size the LSS diagnosed/treated scenarios (Task 1a). |
+| Baseline potassium intake | `baseline_potassium.rds` | Country × sex baseline K intake (Reddin 2023; region-mean fallback for Viet Nam & Ethiopia) feeding the LSS potassium channel. |
+| Euromonitor packaged trend | `Euromonitor_trends_RTSL_v002.xlsx` → `packaged_food_trends.rds` | Matti's pre-combined per-country sodium-source packaged growth rate (+ 95% CI) driving the year-specific shares. |
+| LSS mechanistic audit | `lss_audit.rds` | Per country × sex × scenario Na/K→SBP pathway quantities (the single source of truth for the LSS methods/results tables). |
+| Fiscal audit | `fiscal_audit.rds` | Fiscal pathway parameters + resulting packaged/total-sodium change per sensitivity variant (**exploratory**). |
 | GBD relative risks | `IHME_GBD_2019_RELATIVE_RISKS_*_HTN.xlsx` → `dt_gbd_rr` | Log-linear RR per 10 mmHg SBP, by age × cause; sets bin-specific baseline incidence. |
 | ETTEHAD relative risks | `ettehad_rr_bp_reduction_10mmHg.csv`, `ettehad_rr_bp_reduction_effects.xlsx` | RR per 10 mmHg SBP reduction by BP bin × cause; converts the SBP shift to an incidence change. |
-| Scale-up schedule | user controls in `07_run_interventions.R` | Linear scale-up from `r SCALEUP_YEAR1` to `r SCALEUP_YEAR2`. |
+| Scale-up schedule | `run_config.rds` | Linear scale-up from `r SCALEUP_YEAR1` to `r SCALEUP_YEAR2`. |
 
 ---
 
@@ -629,11 +550,17 @@ by any intervention. Each policy acts only on the source(s) it can plausibly
 reach. Country source shares are taken from the RTSL sodium policy document; a
 `default` row (the simple mean of the ten documented countries) is used for
 any country without its own row, and **every row is renormalised to sum to
-exactly 1.0** (handling documented rounding, e.g. Thailand's shares sum to
-0.999). **Malaysia uses the Philippines source profile** as a proxy, and
+exactly 1.0**. **Malaysia uses the Philippines source profile** as a proxy, and
 **Nigeria/Cameroon** use the provisional shares supplied by RTSL/Matti (with
 bouillon and condiments counted as packaged; Nigeria is used as a proxy for
 Cameroon).
+
+These shares are now **year-specific**: the packaged share follows the
+Euromonitor trend (next section) and the other four renormalise each year so the
+five still sum to 1 in every country-year — a change in *composition* only
+(total sodium intake is unchanged). Table M1 below shows the **base-year
+(`r RC$euromonitor$base_year`)** shares consumed from `source_shares_by_year.rds`;
+the report does not recompute them.
 
 ```{r tbl-source-shares, message=FALSE, warning=FALSE, echo=FALSE}
 ss_disp <- copy(source_shares)
@@ -697,98 +624,121 @@ print(p)
 
 ## Packaged-food consumption trend (Euromonitor)
 
-Packaged sodium is **no longer assumed constant**. The packaged *share* now
-follows a **Euromonitor 2025–2030 predicted trend** — the median annual percent
-change (APC) over non-overlapping, sodium-relevant leaf categories — applied as
-the 2030 end-state $(1+g)^{5}$ and **held flat after 2030**. This shifts source
-*composition* over time (packaged grows; the other sources renormalise to keep
-shares summing to 1) while **total sodium intake is unchanged**. The input is
-built in [`03_clean_inputs.R`](../code/03_clean_inputs.R) and applied in
-[`07_run_interventions.R`](../code/07_run_interventions.R) (Task 4b); source:
-Euromonitor (`Euromonitor_trends_RTSL.xlsx`, Marklund, 21 Jul 2026).
+Packaged sodium is **no longer assumed constant**, and the trend is now
+**country- and year-specific**. It comes from Matti's updated Euromonitor
+workbook (`Euromonitor_trends_RTSL_v002.xlsx`), which supplies a **pre-combined
+per-geography trend** — one row per country (`series_category = "Combined
+selected sodium-sources categories"`) that already merges the sodium-relevant
+categories (sauces/condiments, soups, ready meals, processed meat, savoury
+snacks, cheese, baked goods, **rice/pasta/noodles**, etc.) into a single annual
+percent change **with a 95% confidence interval**. We consume that row directly
+(window = **`r RC$euromonitor$window`**, `r RC$euromonitor$base_year`–2030),
+rather than re-deriving a median over leaf categories.
+
+The packaged share in year $y$ is
+$\text{packaged}(y) = \text{packaged}_{\text{base}}\,(1+g)^{\,y-\text{base}}$,
+capped at a ceiling of **`r fmt_pct(RC$euromonitor$ceiling, 0)`**; the other four
+sources renormalise each year so all five sum to 1. After 2030 the rule is
+**`r RC$euromonitor$post2030`**. This is a change in *composition* only — total
+sodium intake is unchanged (`composition_only = `r RC$euromonitor$composition_only``).
+The trend input is built in [`03_clean_inputs.R`](../code/03_clean_inputs.R) and
+the year-indexed shares in [`07_run_interventions.R`](../code/07_run_interventions.R)
+(`source_shares_by_year.rds`).
 
 ```{r packaged-trend, message=FALSE, warning=FALSE, echo=FALSE}
-pkg_trend <- tryCatch({
-  pt <- readRDS(paste0(wd_data, "packaged_food_trends.rds"))
-  setDT(pt)
-  # geography -> model location (only "Vietnam" differs among the ten countries)
-  pt[, location := fifelse(geography == "Vietnam", "Viet Nam", geography)]
-  pt
-}, error = function(e) NULL)
-
-if (!is.null(pkg_trend)) {
-  nyr <- SCALEUP_YEAR2 - 2025                         # 2030 end-state horizon (=5)
-  pkg_trend[, I2030 := (1 + g)^nyr]
-  # Replicate 07's Task-4b transform on the documented (renormalised) shares:
-  # grow packaged by I2030, then renormalise all five sources to sum to 1.
-  pre <- source_shares[location != "default",
-                       .(location, discretionary, packaged, restaurant, public, inherent)]
-  tt  <- merge(pre, pkg_trend[, .(location, g, I2030)], by = "location", all.x = TRUE)
-  tt[is.na(I2030), `:=`(g = 0, I2030 = 1)]
-  tt[, pkg_raw := packaged * I2030]
-  tt[, denom   := pkg_raw + discretionary + restaurant + public + inherent]
-  tt[, packaged_2030 := pkg_raw / denom]
-  setorder(tt, -g)
-
-  pkg_trend_tbl <- tt[, .(
-    Country                = location,
-    `APC (%/yr)`           = formatC(100 * g, format = "f", digits = 2),
-    `Packaged share 2024`  = fmt_pct(packaged, 1),
-    `Packaged share 2030`  = fmt_pct(packaged_2030, 1)
-  )]
-  pkg_apc_median <- fmt_pct(median(pkg_trend$g), 1)
-  pkg_apc_range  <- paste0(fmt_pct(min(pkg_trend$g), 1), "–", fmt_pct(max(pkg_trend$g), 1))
-
+# Country x selected-year packaged share, growth (+CI), ceiling, post-2030 rule
+# -- consumed from the pipeline's trend diagnostic (no re-derivation).
+if (!is.null(packaged_trend_diag)) {
+  pd <- as.data.table(packaged_trend_diag)[order(-pkg_2030)]
+  pkg_trend_tbl <- pd[, .(
+    Country               = location,
+    `Growth g (%/yr)`     = formatC(100 * g, format = "f", digits = 2),
+    `95% CI`              = ifelse(is.na(g_lcl), "—",
+                               paste0(formatC(100*g_lcl,format="f",digits=2), "–",
+                                      formatC(100*g_ucl,format="f",digits=2))),
+    `Packaged base`       = fmt_pct(pkg_base, 1),
+    `Packaged 2030`       = fmt_pct(pkg_2030, 1),
+    `Packaged 2050`       = fmt_pct(pkg_2050, 1))]
+  pkg_apc_median <- fmt_pct(median(pd$g, na.rm = TRUE), 1)
+  pkg_apc_range  <- paste0(fmt_pct(min(pd$g, na.rm = TRUE), 1), "–",
+                           fmt_pct(max(pd$g, na.rm = TRUE), 1))
   kable(pkg_trend_tbl,
-        caption = paste0("Table M2b. Applied Euromonitor packaged-food growth ",
-                         "(median APC per year) and the resulting packaged share ",
-                         "shift to the 2030 end-state, held flat thereafter."),
-        align = c("l", "r", "r", "r")) |>
+        caption = paste0("Table M2b. Euromonitor v002 pre-combined packaged growth ",
+                         "(g, %/yr, +95% CI) and the year-specific packaged share at ",
+                         "base year (", RC$euromonitor$base_year, "), 2030 and 2050. ",
+                         "Ceiling = ", fmt_pct(RC$euromonitor$ceiling,0),
+                         "; post-2030 = ", RC$euromonitor$post2030, "."),
+        align = c("l", "r", "r", "r", "r", "r")) |>
     kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
                   full_width = TRUE, font_size = 13) |>
     row_spec(0, bold = TRUE) |>
     footnote(general = paste0(
-      "APC = median annual % change over sodium-relevant leaf categories ",
-      "(non-overlapping; parents excluded). Applied as (1+g)^5 to the packaged ",
-      "share only, renormalising the other sources; total intake unchanged. ",
-      "Source: Euromonitor (Marklund, 21 Jul 2026)."))
+      "g = Euromonitor v002 combined per-geography APC (window = ",
+      RC$euromonitor$window, "). Applied as (1+g)^(year-base) to the packaged ",
+      "share, capped at the ceiling; the other four sources renormalise. ",
+      "Composition-only: total sodium intake unchanged. Source: Euromonitor ",
+      "(Marklund v002)."))
 } else {
-  pkg_trend_tbl  <- NULL
-  pkg_apc_median <- "n/a"
-  pkg_apc_range  <- "n/a"
-  cat("packaged_food_trends.rds not found; packaged-trend table skipped.\n")
+  pkg_trend_tbl <- NULL; pkg_apc_median <- "n/a"; pkg_apc_range <- "n/a"
+  cat("packaged_trend_diagnostic.rds not found; packaged-trend table skipped.\n")
 }
+
+# Verify shares sum to 1 in EVERY country-year (consume source_shares_by_year).
+.ssy_ck <- source_shares_by_year[, .(s = sum(.SD)), .SDcols = SODIUM_SOURCES,
+                                 by = .(location, year)]
+share_sum_ok <- max(abs(.ssy_ck$s - 1)) < 1e-6
+```
+
+`r if (exists("share_sum_ok")) paste0("**Share integrity check:** all five source shares sum to 1 in every country-year (max deviation ", formatC(max(abs(.ssy_ck$s-1)), format="e", digits=1), ").")`
+
+```{r fig-packaged-over-time, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=5}
+# Packaged share over time by country (Task 4e).
+pk <- source_shares_by_year[location %in% RC$priority_countries &
+                            year >= RC$euromonitor$base_year & year <= impact_y2]
+fig_pkg_time <- ggplot(pk, aes(year, packaged, colour = location)) +
+  geom_hline(yintercept = RC$euromonitor$ceiling, linetype = "dashed", colour = "grey50") +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "Packaged share of sodium over time, by country",
+       subtitle = paste0("Euromonitor v002 trend; ceiling ",
+                         fmt_pct(RC$euromonitor$ceiling,0), "; post-2030 = ",
+                         RC$euromonitor$post2030, " (dashed = ceiling)"),
+       x = NULL, y = "Packaged share of total sodium", colour = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "right", plot.title = element_text(face = "bold"))
+print(fig_pkg_time)
 ```
 
 ## Effect sizes
 
-Each intervention has a documented **relative reduction** applied to its target
-source at full implementation. Multiple policies may target the same source
-(notably `packaged`).
+The **composition-based** interventions (public food procurement, FOPL, salt
+targets, and the exploratory fiscal policy) have a documented **relative
+reduction** applied to their target source at full implementation; when several
+target the same source (notably `packaged`) they compose multiplicatively
+($1-\prod_i(1-\text{eff}_i)$). **LSS is different**: it is a mechanistic
+Na/K→SBP model (see below), not a single source effect size — the discretionary
+sodium it displaces is derived from the LSS composition, and its potassium
+channel is added on top. The effect sizes below are read from the pipeline's
+published table (`run_config.rds`); the fiscal effect shown is the **base case
+of an exploratory pathway** (next section), not a confirmed value.
 
 ```{r tbl-effect-sizes, message=FALSE, warning=FALSE, echo=FALSE}
-eff_disp <- merge(intervention_effects,
-                  intervention_registry[, .(intervention, label, placeholder)],
-                  by = "intervention", all.x = TRUE)
+.eff_lab <- c(public_procurement = "Public food procurement & service",
+              media_campaign = "Behaviour change / media campaigns",
+              fopl = "Front-of-pack labelling (FOPL)",
+              salt_targets = "Salt targets (reformulation)",
+              fiscal = "Fiscal policy — salt tax (EXPLORATORY, base case)",
+              lss = "Low-sodium salt substitutes (mechanistic; see LSS section)")
+eff_disp <- intervention_effects[intervention %in% names(.eff_lab)]
 eff_disp <- eff_disp[, .(
-  Intervention = label,
+  Intervention = .eff_lab[intervention],
   `Target source` = source,
   `Relative reduction` = fmt_pct(effect, 1),
   Note = fcase(
-    intervention == "lss",            "sodium->SBP SENSITIVITY only; base case uses SSaSS trial RRs",
+    intervention == "lss",            "per-discretionary-user Na displacement (KCl x adherence x uptake); K channel adds SBP effect",
+    intervention == "fiscal",         "EXPLORATORY base case; see fiscal pathway + sensitivity",
     intervention == "media_campaign", "retained in registry; excluded from reported scenarios",
-    default = ""
-  )
-)]
-# canonical order
-ord <- c("Public food procurement & service",
-         "Behaviour change / media campaigns",
-         "Behaviour change / media campaigns",
-         "Front-of-pack labelling (FOPL)",
-         "Salt targets (reformulation)",
-         "Fiscal policy (salt tax)",
-         "Low-sodium salt substitutes (LSS)")
-eff_disp[, Intervention := factor(Intervention, levels = unique(ord))]
+    default = ""))]
 setorder(eff_disp, Intervention, `Target source`)
 
 kable(eff_disp,
@@ -798,60 +748,228 @@ kable(eff_disp,
                 full_width = TRUE, font_size = 13) |>
   row_spec(0, bold = TRUE) |>
   footnote(general = paste0(
-    "Media campaigns act on both discretionary and packaged sodium (1.0% each); ",
-    "media is retained in the registry but excluded from reported scenarios. ",
-    "FOPL, salt targets and fiscal policy all act on packaged sodium and are ",
-    "composed multiplicatively when combined. The LSS discretionary reduction ",
-    "(15%) is a documented sodium->SBP SENSITIVITY only: the reported LSS ",
-    "scenarios (2/4/5) instead apply the SSaSS trial relative risks (stroke ",
-    "incidence RR 0.90 and a conditional case-fatality multiplier 0.856), which ",
-    "capture the potassium benefit. Source: RTSL effect-size tables; LSS from ",
-    "Neal et al., NEJM 2021."))
+    "FOPL, salt targets and fiscal policy act on packaged sodium and compose ",
+    "multiplicatively. Fiscal is EXPLORATORY (a tax->pass-through->elasticity ",
+    "pathway; not '10% tax => 10% reduction' and not 'all packaged taxable'). ",
+    "The LSS row is the per-discretionary-user sodium DISPLACEMENT that sizes ",
+    "salteff under the primary Na/K-SBP method; the potassium-mediated SBP ",
+    "effect is added inside the model and is NOT captured by this single ",
+    "number. Media is excluded from reported scenarios. Source: RTSL effect-size ",
+    "tables; run_config.rds."))
 ```
 
-## Low-sodium salt substitutes (LSS)
+## Low-sodium salt substitutes (LSS) — primary Na/K→SBP method
 
-LSS is derived from the **Salt Substitute and Stroke Study** (SSaSS; Neal et
-al., *NEJM* 2021;385:1067–77), in which regular salt was replaced with a 75%
-NaCl / 25% KCl substitute. **The reported LSS scenarios now use the SSaSS
-trial-based relative risks ("approach B"), which capture the
-potassium-mediated benefit** — the earlier "sodium arm only / no potassium
-channel" treatment no longer applies.
+The **primary** LSS method is a mechanistic **sodium + potassium → SBP** model
+(method `r sprintf("\x60%s\x60", RC$lss$method)`), following the structure of
+**Huang et al. 2026** and using the **Filippini (2020)** potassium→blood-pressure
+dose-response. Switching discretionary table salt to a
+`r fmt_pct(RC$lss$nacl_fraction,0)` NaCl / `r fmt_pct(RC$lss$kcl_fraction,0)` KCl
+substitute both **cuts sodium** and **adds potassium**; both channels lower SBP,
+and the combined SBP change feeds the same ETIHAD/GBD SBP→cause machinery as
+every other sodium policy (so LSS here affects **all four CVD causes**, not only
+stroke).
 
-**Trial-RR pathway.** The SSaSS effect on **stroke** is applied directly on this
-model's `(IR, CF)` structure, decomposed with no double-counting:
+**This implementation is benefit-only.** Unlike Huang et al., this disease model
+has **no CKD / hyperkalaemia state**, so LSS harms are **not** modelled and the
+LSS benefit is **not offset** (flagged in Limitations and recorded in the audit).
 
-- an **incidence relative risk of `r formatC(LSS_RR_STROKE_INC, format="f", digits=2)`**
-  applied to the stroke causes (ischemic + hemorrhagic), and
-- a **conditional case-fatality multiplier
-  `r formatC(0.77, format="f", digits=2)`/`r formatC(LSS_RR_STROKE_INC, format="f", digits=2)`
-  = `r formatC(LSS_CF_MULT, format="f", digits=3)`** on stroke case fatality.
+The per-eligible-and-adherent-person pathway is:
 
-The total-stroke RR **`r formatC(LSS_STROKE_TOTAL, format="f", digits=2)`** is
-**not** applied separately (0.90 × 0.856 reproduces it). Non-stroke causes (IHD,
-HHD) are **unaffected** in the base case. Consequently, **for LSS scenarios case
-fatality is no longer held at baseline** — so LSS delivers some genuinely
-*averted* deaths, not only delayed ones (see the terminology note above).
+1. **Composition.** LSS is `r fmt_pct(RC$lss$nacl_fraction,0)`/`r fmt_pct(RC$lss$kcl_fraction,0)`
+   NaCl/KCl by mass. Discretionary **sodium** is cut by the KCl fraction, scaled
+   by uptake × adherence (SSaSS yr-5 adherence ≈ `r formatC(RC$lss$adherence, format="f", digits=2)`;
+   uptake = `r formatC(RC$lss$uptake, format="f", digits=2)`).
+2. **Sodium channel.** The displaced discretionary sodium feeds the **existing
+   Filippini Na→SBP dose-response** (2.8 mmHg/g raised-BP, 1.0 mmHg/g normal-BP),
+   subject to the WHO 2 g/day floor.
+3. **Potassium channel.** Baseline K intake (g/day, Reddin 2023) and the K added
+   by LSS are converted to **achieved excretion (mmol/day)** — mg↔mmol via
+   `r RC$lss$k_mg_per_mmol` mg/mmol, intake→excretion via ÷`r RC$lss$k_intake_to_excretion`
+   — and mapped to an SBP change with the Filippini U-shaped achieved-excretion
+   curve (reference 90 mmol/day), evaluated at baseline vs post-LSS excretion and
+   differenced. The effect is modulated by baseline sodium (stronger at higher
+   sodium) and **attenuated in normotensives** (factor
+   `r formatC(RC$lss$nonhtn_factor, format="f", digits=2)`;
+   `r if (isTRUE(RC$lss$nonhtn_attenuation)) "enabled" else "disabled"`).
+4. **Combine.** The Na- and K-mediated SBP changes are combined
+   **`r if (isTRUE(RC$lss$additive)) "additively" else "non-additively"`**
+   (additivity factor `r formatC(RC$lss$additivity_factor, format="f", digits=2)`;
+   a companion factor lets the Huang "100%→80%" sensitivity be a one-line change),
+   and the combined ΔSBP drives IHD, stroke (ischemic + hemorrhagic) and HHD.
 
-**Three scenarios (2/4/5), coverage provisional.** LSS runs as three explicit
-variants, differing only in reach and coverage (RTSL/HEARTS to confirm):
+```{r lss-constants, message=FALSE, warning=FALSE, echo=FALSE}
+lss_const <- data.table(
+  Parameter = c("NaCl fraction", "KCl fraction", "Uptake", "Adherence",
+                "Additive?", "Additivity factor", "Non-HTN K attenuation",
+                "mg per mmol K", "Intake→excretion factor",
+                "Whole-population coverage (s2)", "Harms modelled"),
+  Value = c(fmt_pct(RC$lss$nacl_fraction,0), fmt_pct(RC$lss$kcl_fraction,0),
+            formatC(RC$lss$uptake,format="f",digits=2), formatC(RC$lss$adherence,format="f",digits=2),
+            as.character(RC$lss$additive), formatC(RC$lss$additivity_factor,format="f",digits=2),
+            paste0(RC$lss$nonhtn_attenuation, " (x", formatC(RC$lss$nonhtn_factor,format="f",digits=2), ")"),
+            as.character(RC$lss$k_mg_per_mmol), as.character(RC$lss$k_intake_to_excretion),
+            formatC(RC$lss$coverage_all,format="f",digits=2), RC$lss$harms_modelled))
+kable(lss_const, caption = "Table M3a. LSS Na/K→SBP parameters (from run_config.rds).",
+      align = c("l","r")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE, font_size = 13) |>
+  row_spec(0, bold = TRUE)
+```
 
-- **Scenario 2 — whole-population** discretionary, with a manually adjustable
-  coverage toggle (`LSS_COVERAGE_ALL = `r formatC(LSS_COVERAGE_ALL, format="f", digits=2)``).
-- **Scenario 4 — diagnosed hypertension** (BP ≥ 140 proxy), coverage
-  `r formatC(HTN_DIAGNOSED_COV, format="f", digits=2)` (HEARTS-linked).
-- **Scenario 5 — treated hypertension**, coverage
-  `r formatC(HTN_TREATED_COV, format="f", digits=2)`.
+### NCD-RisC hypertension eligibility (LSS scenarios 4 & 5)
 
-Household **uptake/spillover for scenarios 4/5 is under investigation** (full
-spillover is long-term scope). The reach ramps over the same
-`r SCALEUP_YEAR1`–`r SCALEUP_YEAR2` window as the other policies.
+The diagnosed/treated LSS scenarios are sized by **NCD-RisC (Lancet 2021)**
+population eligibility, **replacing the earlier BP ≥ 140 proxy**. These are
+**age-standardised 30–79** estimates (NOT age-specific), annual to
+`r RC$htn_source_year`, carried forward for later model years, by country and
+sex. The eligible **population** shares are
 
-**Sodium→SBP path retained as a documented sensitivity only.** The 15%
-discretionary-sodium reduction (`EFF_LSS_DISCRETIONARY = 0.15`; sensitivity
-0.12–0.18) is what the illustrative `salteff` tables show for LSS, but it is a
-sodium→SBP **sensitivity** and is **never combined** with the trial-RR path in
-the same run.
+$$
+P(\text{diagnosed in pop}) = P(\text{HTN})\times P(\text{dx}\mid\text{HTN}),
+\qquad
+P(\text{treated in pop}) = P(\text{HTN})\times P(\text{tx}\mid\text{HTN}),
+$$
+
+used as scenario-4 and scenario-5 coverage respectively (scenario 2 uses the
+whole-population toggle). 95% uncertainty intervals are carried through; the
+population-share UI is a transparent product of the prevalence and conditional
+bounds (not a formally propagated CI).
+
+```{r ncdrisc-eligibility, message=FALSE, warning=FALSE, echo=FALSE}
+he <- as.data.table(htn_eligibility)[location %in% RC$priority_countries]
+# Knit-visible integrity check (Task 4c): every modelled country x sex present.
+need <- CJ(location = RC$priority_countries, sex = c("Male","Female"))
+miss_elig <- need[!he[!is.na(diagnosed_pop) & !is.na(treated_pop), .(location, sex)],
+                  on = c("location","sex")]
+he_tbl <- he[order(location, sex), .(
+  Country = location, Sex = sex, `Source yr` = source_year,
+  `HTN prev` = fmt_pct(htn_prev,1),
+  `Dx | HTN` = fmt_pct(diagnosed_cond,1), `Tx | HTN` = fmt_pct(treated_cond,1),
+  `Diagnosed pop` = fmt_pct(diagnosed_pop,1), `Treated pop` = fmt_pct(treated_pop,1))]
+kable(he_tbl, caption = paste0("Table M3b. NCD-RisC hypertension eligibility by ",
+      "country × sex (age-standardised 30–79, ", RC$htn_source_year,
+      "). Diagnosed/treated pop shares size LSS scenarios 4/5."),
+      align = c("l","l", rep("r",6))) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 12) |>
+  row_spec(0, bold = TRUE)
+```
+
+`r if (nrow(miss_elig) > 0) sprintf("⚠️ **Missing eligibility inputs** for: %s. LSS scenarios 4/5 cannot be sized for these — investigate before using results.", paste(sprintf("%s/%s", miss_elig$location, miss_elig$sex), collapse=", ")) else "All modelled country × sex combinations have NCD-RisC eligibility inputs."`
+
+### Baseline potassium intake
+
+Baseline potassium is from **Reddin et al. 2023** (country × sex, g/day). Viet Nam
+and Ethiopia are absent from the source and inherit their **GBD region mean**
+(Southeast Asia; Eastern Sub-Saharan Africa), flagged below.
+
+```{r baseline-potassium, message=FALSE, warning=FALSE, echo=FALSE}
+bk <- as.data.table(baseline_potassium)[location %in% RC$priority_countries]
+bk_tbl <- bk[order(location, sex), .(
+  Country = location, Sex = sex,
+  `K intake (g/d)` = formatC(k_intake_g, format="f", digits=2),
+  `95% CI` = paste0(formatC(k_lcl,format="f",digits=2), "–", formatC(k_ucl,format="f",digits=2)),
+  Source = fifelse(source == "reddin2023_region_fallback", "region-mean fallback", "Reddin 2023"))]
+kable(bk_tbl, caption = "Table M3c. Baseline potassium intake by country × sex (Reddin 2023; region-mean fallback flagged).",
+      align = c("l","l","r","r","l")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 12) |>
+  row_spec(0, bold = TRUE)
+```
+
+### LSS mechanistic quantities (audit)
+
+Table M3d shows the full Na/K→SBP pathway quantities for the **whole-population
+scenario (s2)** by country × sex, consumed from `lss_audit.rds` (the single
+source of truth). The diagnosed/treated scenarios (s4/s5) differ only in the
+eligible-population coverage and are in the same audit file.
+
+```{r lss-audit-table, message=FALSE, warning=FALSE, echo=FALSE}
+la <- as.data.table(lss_audit)
+la_s2 <- la[grepl("^lss_s2", scenario) & method == "na_k_sbp"][order(location, sex)]
+if (nrow(la_s2)) {
+  la_tbl <- la_s2[, .(
+    Country = location, Sex = sex,
+    `Base Na (g)` = formatC(baseline_sodium_g, format="f", digits=2),
+    `Base K (g)`  = formatC(baseline_potassium_g, format="f", digits=2),
+    `Disc share`  = fmt_pct(discretionary_share,0),
+    `Cov`         = fmt_pct(eligible_pop_share,0),
+    `Na displ (g)` = formatC(sodium_displaced_g, format="f", digits=3),
+    `K added (g)`  = formatC(potassium_added_g, format="f", digits=3),
+    `ΔSBP Na` = formatC(sbp_delta_na_mmHg, format="f", digits=2),
+    `ΔSBP K`  = formatC(sbp_delta_k_mmHg, format="f", digits=2),
+    `ΔSBP tot` = formatC(sbp_delta_combined_mmHg, format="f", digits=2))]
+  kable(la_tbl, caption = paste0("Table M3d. LSS Na/K→SBP pathway (scenario 2, whole-population) ",
+        "by country × sex. Harms modelled: none (no CKD channel). Causes affected: all four CVD."),
+        align = c("l","l", rep("r",8))) |>
+    kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 11) |>
+    row_spec(0, bold = TRUE)
+} else cat("No na_k_sbp LSS rows in lss_audit.rds.\n")
+```
+
+### SSaSS trial-RR benchmark (sensitivity, not combined)
+
+For **SSaSS-comparable populations** (diagnosed/treated hypertension) the report
+also reports an **SSaSS trial-RR benchmark** (method `ssass_trial_rr`), if it was
+run (scenarios `lss_s4_ssass` / `lss_s5_ssass`). It applies the SSaSS stroke
+relative risks directly on `(IR, CF)`:
+
+- **stroke incidence RR `r formatC(LSS_RR_STROKE_INC, format="f", digits=2)`** (ischemic + hemorrhagic), and
+- a **conditional case-fatality multiplier `r formatC(LSS_CF_MULT, format="f", digits=3)`**
+  (= 0.77/0.90; total-stroke RR `r formatC(LSS_STROKE_TOTAL, format="f", digits=2)` = 0.90 × 0.856, not applied separately).
+
+Non-stroke causes are unaffected. **This benchmark is NOT combined with the
+Na/K→SBP method** — they are distinct scenarios driven by a single pathway each
+(the model enforces one pathway per cause), and SSaSS RRs are **not applicable to
+the whole population**, so no `lss_s2` benchmark exists (guarded in code). The
+comparison of the two methods is in the Results section.
+
+## Fiscal policy (exploratory)
+
+Fiscal policy is modelled as an **explicit, still-simple pathway** and is labelled
+**exploratory/provisional** throughout. It replaces the earlier single opaque
+multiplier; it does **not** imply "a 10% tax ⇒ 10% sodium reduction", nor that
+**all** packaged sodium is taxable. The chain is
+
+$$
+\text{tax rate} \to \text{pass-through} \to \text{price change} \to
+\text{elasticity-based quantity response} \to \text{substitution} \to
+\Delta\text{taxable packaged sodium} \to \Delta\text{total packaged sodium},
+$$
+
+with the last step multiplying by a **taxable-packaged share < 1** (the fraction
+of packaged sodium in taxed nutrient-profile categories). The base case is
+anchored on **Saxena et al. 2025** (Philippines): a 20% tax → ~10% relative
+reduction in *taxed* packaged sodium, consumer (quantity) response dominant,
+reformulation minor. Applying broad food-category price elasticities to
+high-sodium foods specifically is uncertain (a peer-review caveat). The sensitivity
+set brackets the base case. All values are read from `fiscal_audit.rds`.
+
+```{r fiscal-audit-table, message=FALSE, warning=FALSE, echo=FALSE}
+fa <- as.data.table(fiscal_audit)
+fa_tbl <- fa[, .(
+  Variant = variant,
+  `Tax`         = fmt_pct(tax_rate, 0),
+  `Pass-thru`   = fmt_pct(pass_through, 0),
+  `Price Δ`     = fmt_pct(price_change, 0),
+  `Elasticity`  = formatC(elasticity, format = "f", digits = 2),
+  `Qty response`= fmt_pct(quantity_response, 1),
+  `Taxable share` = fmt_pct(taxable_share, 0),
+  `Substitution`  = fmt_pct(substitution, 0),
+  `Reformulation` = fmt_pct(reformulation, 0),
+  `Δ taxed packaged`  = fmt_pct(taxed_packaged_reduction, 1),
+  `Δ total packaged`  = fmt_pct(packaged_reduction, 1))]
+kable(fa_tbl, caption = paste0("Table M5. Fiscal policy pathway by sensitivity ",
+      "variant (EXPLORATORY). 'Δ total packaged' = reduction in TOTAL packaged ",
+      "sodium = Δ taxed packaged × taxable share. Ramp: ", RC$scaleup_window[1],
+      "–", RC$scaleup_window[2], ". Source: Saxena et al. 2025; fiscal_audit.rds."),
+      align = c("l", rep("r", 10))) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 11) |>
+  row_spec(0, bold = TRUE)
+```
+
+The full package uses the **base** fiscal effect if
+`include_fiscal_in_package = `r RC$fiscal$include_in_package``; the low/base/high
+variants also run as their own **individual** scenarios (`fiscal_low`,
+`fiscal_base`, `fiscal_high`) so the sensitivity is visible in the results.
 
 ## Composition math
 
@@ -871,27 +989,33 @@ $$
 \boxed{\;\text{salteff} \;=\; \sum_{s}\, \text{share}_s \cdot \text{composed}_s\;}
 $$
 
-**Worked sanity check (asserted in code).** For public procurement in Viet Nam,
-only the `public` source is affected (share 0.05, effect 20%), so
-$\text{salteff} = 0.20 \times 0.05 = 0.01$.
+**Worked sanity check.** For public procurement, only the `public` source is
+affected (effect `r fmt_pct(intervention_effects[intervention=="public_procurement", effect],0)`),
+so at base year $\text{salteff} = 0.20 \times \text{public share}$.
 
 ```{r sanity-check, message=FALSE, warning=FALSE, echo=FALSE}
-chk <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam",
-                                         source_shares, intervention_effects))
+chk        <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam"))
+vn_public  <- source_shares[location == "Viet Nam", public]
 ```
 
-The in-report recomputation returns
-$\text{salteff}_{\text{Viet Nam, public procurement}} =$
-**`r formatC(chk, format = "f", digits = 4)`**, matching $0.20 \times 0.05$.
+For Viet Nam the base-year `public` share is
+**`r formatC(vn_public, format="f", digits=3)`**, so
+$\text{salteff}_{\text{Viet Nam, public procurement}} = 0.20 \times
+`r formatC(vn_public, format="f", digits=3)` =$
+**`r formatC(chk, format = "f", digits = 4)`** (the in-report recomputation of the
+pipeline's formula). Note `salteff` is now **year-specific** for packaged-source
+policies — the value above is the base-year (`r RC$euromonitor$base_year`) figure.
 
 ## From `salteff` to health impact
 
 Given a country's `salteff`, the sodium→SBP interventions reduce sodium intake
-and — through blood pressure — CVD incidence, with case fatality **not**
-modified (steps 1–6 below). The **LSS** scenarios instead use the SSaSS
-trial-RR pathway, which modifies stroke **incidence and case fatality**
-directly (see the LSS section) and bypasses the sodium→SBP incidence cut for
-stroke.
+and — through blood pressure — CVD incidence, with case fatality **not** modified
+(steps 1–6 below). The **primary LSS** scenarios use the mechanistic Na/K→SBP
+method: the combined (sodium + potassium) SBP change flows through the SAME
+sodium→SBP machinery (affecting all four causes). The optional **SSaSS trial-RR
+benchmark** scenarios instead modify stroke **incidence and case fatality**
+directly (see the LSS section) and bypass the sodium→SBP cut for stroke; the two
+LSS methods are never combined.
 
 1. **Target reduction (grams).** With `salt` the baseline sodium column and the
    `"percent"` method used here, the targeted reduction is
@@ -943,18 +1067,25 @@ stroke.
    per-10-mmHg RR above.
 
 6. **Case fatality unchanged (sodium→SBP path).** $CF^{\text{new}} = CF$ and
-   $\text{eff\_cf}=1$: the sodium→SBP interventions act on incidence only.
-   Before `saltyear1`, $IR^{\text{new}} = IR$.
+   $\text{eff\_cf}=1$: the sodium→SBP interventions (including the **primary
+   Na/K→SBP LSS** method) act on incidence only. Before `saltyear1`,
+   $IR^{\text{new}} = IR$.
 
-**LSS exception (trial-RR path).** For the LSS scenarios, stroke incidence is
-scaled by the SSaSS RR (`r formatC(LSS_RR_STROKE_INC, format="f", digits=2)`) and
-stroke **case fatality** by the conditional multiplier
-`r formatC(LSS_CF_MULT, format="f", digits=3)` (both blended toward 1 by the
-reached fraction and ramped over the scale-up window); non-stroke causes are
-unchanged. So for LSS, $\text{eff\_cf}\neq 1$ on stroke.
+**Primary LSS (Na/K→SBP).** The LSS scenarios add a potassium-mediated SBP
+change to the sodium-mediated one (step 3) and run the **combined** ΔSBP through
+steps 4–5, so LSS affects incidence for **all four causes** via SBP (case
+fatality unchanged, like the other sodium→SBP policies).
 
-The modified $IR$ (and, for LSS, $CF$) then flow through the same
-state-transition recurrences given above.
+**SSaSS trial-RR benchmark exception.** For the optional benchmark scenarios
+only, stroke incidence is scaled by the SSaSS RR
+(`r formatC(LSS_RR_STROKE_INC, format="f", digits=2)`) and stroke **case
+fatality** by the conditional multiplier `r formatC(LSS_CF_MULT, format="f", digits=3)`
+(both blended toward 1 by the reached fraction and ramped); non-stroke causes are
+unchanged. So for the benchmark, $\text{eff\_cf}\neq 1$ on stroke. The two LSS
+methods are never combined.
+
+The modified $IR$ (and, for the SSaSS benchmark, $CF$) then flow through the
+same state-transition recurrences given above.
 
 ```{r flow-diagram, message=FALSE, warning=FALSE, echo=FALSE, fig.width=11, fig.height=2.6}
 boxes <- data.table(
@@ -983,15 +1114,15 @@ ggplot() +
 
 ## Scenarios
 
-The model's user controls (`scenario_mode = "both"`) generate a **baseline**,
-one scenario per selected **individual** intervention, and a combined
-**`full_package`**. Matching `code/07_run_interventions.R`
-(`include_placeholders_in_package <- FALSE`, media not selected), the reported
-package comprises **four policies** —
-`public_procurement + fopl + salt_targets + fiscal`. **Media** is retained in
-the registry but excluded from reported scenarios. **LSS** is not folded into
-the package; it runs as **three separate scenarios (2/4/5)** via the SSaSS
-trial-RR pathway (see the LSS section).
+The scenario set is read from the pipeline's resolved registry (`run_config.rds`)
+and intersected with the outputs (Table M3). The **`full_package`** membership is
+`r paste(package_interventions, collapse = " + ")` — driven by the pipeline's
+`include_fiscal_in_package = `r RC$fiscal$include_in_package`` (fiscal is
+`r if (isTRUE(RC$fiscal$include_in_package)) "included" else "excluded"`). **LSS**
+is not folded into the package; it runs as separate scenarios under the primary
+**Na/K→SBP** method (whole-population, diagnosed-HTN, treated-HTN), plus the
+optional SSaSS trial-RR benchmark for the HTN variants (see the LSS section).
+**Media** and the fiscal sensitivity variants are handled per the registry.
 
 ```{r tbl-scenarios, message=FALSE, warning=FALSE, echo=FALSE}
 scn_tbl <- data.table(
@@ -1016,8 +1147,10 @@ kable(scn_disp,
 ```
 
 The resulting `salteff` is **country-specific** because it depends on the local
-source shares. Table M4 illustrates this for a few representative countries
-(recomputed in-report from Tables M1–M2).
+source shares, and now **year-specific** (packaged shares trend). Table M4
+illustrates the **base-year** value for a few representative countries, computed
+from the pipeline's published base-year shares and effect sizes (`run_config.rds`)
+— the same composition formula production uses, not a second model.
 
 ```{r tbl-salteff, message=FALSE, warning=FALSE, echo=FALSE}
 ref_countries <- intersect(c("Viet Nam", "Bangladesh", "China", "Thailand", "default"),
@@ -1043,11 +1176,11 @@ kable(salteff_grid,
   row_spec(0, bold = TRUE) |>
   footnote(general = paste0(
     "salteff is largest where the intervention's target source dominates local ",
-    "intake (e.g. FOPL/salt-targets/fiscal in packaged-heavy Viet Nam). The LSS ",
-    "(Na-path) column is the share-weighted discretionary reduction shown ONLY ",
-    "as a documented sodium->SBP sensitivity; the reported LSS scenarios (2/4/5) ",
-    "instead use the SSaSS trial relative risks and are not summarised by this ",
-    "salteff."))
+    "intake. The LSS (Na displacement) column is the share-weighted discretionary ",
+    "SODIUM reduction that sizes the Na channel of the primary Na/K->SBP method; ",
+    "it is NOT the full LSS health effect (the potassium-mediated SBP change is ",
+    "added inside the model and is not captured by this salteff). Base-year ",
+    "values; salteff is year-specific for packaged-source policies."))
 ```
 
 The stacked bars below show the same illustrative `salteff` for **every
@@ -1456,31 +1589,37 @@ dd_annual[, scenario := as_scn_factor(as.character(scenario))]
 setorder(dd_annual, scenario, year)
 dd_annual[, cum_delayed := cumsum(deaths_delayed), by = scenario]
 
-# Helper for inline numbers.
-ddc <- function(scn) dd_cum[as.character(scenario) == scn, deaths_delayed]
+# Helpers for inline numbers (robust to scenarios absent from this run).
+ddc <- function(scn) { v <- dd_cum[as.character(scenario) == scn, deaths_delayed]
+  if (length(v) == 0) NA_real_ else v }
+mm  <- function(scn) { v <- ddc(scn); if (is.na(v)) "n/a" else fmt_m(v) }
+.fiscal_scn <- if ("fiscal_base" %in% scenarios_present) "fiscal_base" else
+               if ("fiscal" %in% scenarios_present) "fiscal" else NA_character_
 ```
 
 Over `r impact_window`, across `r n_countries` countries:
 
-- The **full package** (public procurement + FOPL + salt targets + fiscal)
-  delays **`r fmt_m(ddc("full_package"))` million** CVD deaths
+- The **full package** (`r paste(package_interventions, collapse = " + ")`)
+  delays **`r mm("full_package")` million** CVD deaths
   (`r fmt_pct(dd_cum[scenario=="full_package", pct_vs_base])` of baseline
   CVD deaths in the window; ~`r fmt_k(dd_cum[scenario=="full_package", per_year])`
-  thousand per year). LSS is **not** in the package (it runs separately).
+  thousand per year). LSS is **not** in the package (it runs separately);
+  fiscal membership follows `include_fiscal_in_package = `r RC$fiscal$include_in_package``.
 - Among the packaged-food policies, **salt targets** contribute most
-  (`r fmt_m(ddc("salt_targets"))` million), followed by **FOPL**
-  (`r fmt_m(ddc("fopl"))` million) and **fiscal policy**
-  (`r fmt_m(ddc("fiscal"))` million, provisional).
-- **Public procurement** delays `r fmt_m(ddc("public_procurement"))` million
-  (provisional; public share under revision). Media is excluded from reported
-  scenarios.
-- **LSS (SSaSS trial-RR)** runs as three scenarios: whole-population
-  **scenario 2** delays `r fmt_m(ddc("lss_s2"))` million, diagnosed-HTN
-  **scenario 4** `r fmt_m(ddc("lss_s4"))` million, and treated-HTN
-  **scenario 5** `r fmt_m(ddc("lss_s5"))` million. Because the trial-RR pathway
-  captures the **potassium** benefit (stroke incidence RR 0.90 **and** a stroke
-  case-fatality multiplier 0.856), these are **not** the old "no-potassium lower
-  bound"; coverage assumptions are provisional.
+  (`r mm("salt_targets")` million), followed by **FOPL** (`r mm("fopl")` million)
+  and the **exploratory fiscal policy** (base case
+  `r if (!is.na(.fiscal_scn)) mm(.fiscal_scn) else "n/a"` million — see the
+  fiscal section; low/high variants bracket this).
+- **Public procurement** delays `r mm("public_procurement")` million
+  (provisional; public share under revision). Media is excluded.
+- **LSS — primary Na/K→SBP** runs as three scenarios: whole-population
+  **s2** `r mm("lss_s2")` million, diagnosed-HTN **s4** `r mm("lss_s4")` million,
+  treated-HTN **s5** `r mm("lss_s5")` million. These combine the sodium- and
+  potassium-mediated SBP effects across all four CVD causes. The **SSaSS
+  trial-RR benchmark** (stroke-only), where run, gives s4
+  `r mm("lss_s4_ssass")` and s5 `r mm("lss_s5_ssass")` million — compared head-to-head
+  in the Na/K-vs-SSaSS table below. Coverage is from NCD-RisC population
+  eligibility (no BP≥140 proxy).
 
 ## Table 1 — Cumulative deaths delayed by scenario
 
@@ -1511,11 +1650,12 @@ kable(tab1_fmt,
   footnote(general = paste0(
     "Deaths delayed = baseline deaths - scenario deaths, summed over ",
     impact_window, ". '% of baseline' is relative to baseline CVD deaths in ",
-    "the same window. The full package is public procurement + FOPL + salt ",
-    "targets + fiscal (media excluded; LSS not in the package). LSS runs as ",
-    "three separate scenarios (2/4/5) via the SSaSS trial RRs, which for LSS ",
-    "also lower stroke case fatality (so LSS averts, not only delays, some ",
-    "deaths). Coverage and fiscal/public-share assumptions are provisional."))
+    "the same window. Full-package membership follows include_fiscal_in_package = ",
+    RC$fiscal$include_in_package, " (LSS never in the package). LSS scenarios use ",
+    "the primary Na/K->SBP method (all four causes via SBP); the SSaSS trial-RR ",
+    "benchmark rows (if present) are stroke-only and also lower stroke case ",
+    "fatality. Fiscal is EXPLORATORY; public-share and coverage assumptions are ",
+    "provisional."))
 ```
 
 ```{r table1-dt, message=FALSE, warning=FALSE, echo=FALSE}
@@ -1734,6 +1874,75 @@ if (data.out[, any(!is.na(region))]) {
       "regional breakdown skipped.\n")
 }
 ```
+
+---
+
+# LSS: primary Na/K–SBP vs SSaSS benchmark
+
+The two LSS methods are **distinct interventions on distinct populations**, not
+interchangeable estimates of the same thing:
+
+- **Na/K–SBP (primary)** models sodium displacement **and** potassium addition
+  through SBP, affecting **all four CVD causes**; it applies to whole-population
+  (s2) and to NCD-RisC diagnosed/treated hypertensives (s4/s5).
+- **SSaSS trial-RR (benchmark)** applies the SSaSS **stroke** relative risks
+  (incidence + case fatality) and is valid only for SSaSS-comparable
+  (diagnosed/treated HTN) populations — never the whole population.
+
+```{r nak-vs-ssass, message=FALSE, warning=FALSE, echo=FALSE}
+# Deaths delayed by scenario (impact window) joined to the LSS audit composition,
+# for the HTN variants where both methods exist.
+dd_lss <- deaths_delayed_by(data.out, by = character(0), years = impact_y1:impact_y2)
+dd_lss <- dd_lss[grepl("^lss", as.character(scenario)),
+                 .(scenario = as.character(scenario), deaths_delayed)]
+la <- as.data.table(lss_audit)
+la_sc <- la[, .(elig = eligibility_group[1], cov = mean(eligible_pop_share),
+                na_disp = mean(sodium_displaced_g), k_add = mean(potassium_added_g),
+                dsbp = mean(sbp_delta_combined_mmHg)), by = .(scenario, method)]
+cmp <- merge(la_sc, dd_lss, by = "scenario", all.x = TRUE)
+cmp[, `:=`(Scenario = scenario_labels[scenario])]
+setorder(cmp, method, scenario)
+cmp_tbl <- cmp[, .(
+  Scenario, Method = method, `Eligibility` = elig,
+  `Elig. pop share` = fmt_pct(cov, 1),
+  `Na displaced (g)` = formatC(na_disp, format = "f", digits = 3),
+  `K increase (g)`   = formatC(k_add,   format = "f", digits = 3),
+  `Mean ΔSBP (mmHg)` = ifelse(is.na(dsbp), "n/a (trial RR)", formatC(dsbp, format = "f", digits = 2)),
+  `Deaths delayed (M)` = ifelse(is.na(deaths_delayed), "n/a", fmt_m(deaths_delayed)))]
+kable(cmp_tbl, caption = paste0("Table 3b. LSS Na/K–SBP vs SSaSS trial-RR ",
+      "benchmark: eligibility, exposure change, SBP change and deaths delayed ",
+      "(", impact_window, "). The methods are NOT identical interventions — they ",
+      "differ in pathway (all-CVD SBP vs stroke-only RR) and are shown side by side, ",
+      "not merged."),
+      align = c("l","l","l", rep("r",5))) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 11) |>
+  row_spec(0, bold = TRUE) |>
+  footnote(general = paste0(
+    "ΔSBP is 'n/a (trial RR)' for the SSaSS benchmark because its effect is a ",
+    "stroke relative risk, not an SBP change. Na displaced / K increase are the ",
+    "same composition for both methods; the health effect differs by pathway."))
+```
+
+## Fiscal policy — sensitivity results (exploratory)
+
+```{r fiscal-results, message=FALSE, warning=FALSE, echo=FALSE}
+fisc_scn <- scenarios_present[grepl("^fiscal", scenarios_present)]
+if (length(fisc_scn)) {
+  fr <- dd_cum[as.character(scenario) %in% fisc_scn]
+  fr_tbl <- fr[, .(Scenario = scenario_labels[as.character(scenario)],
+                   `Deaths delayed (M)` = fmt_m(deaths_delayed, 3),
+                   `% of baseline` = fmt_pct(pct_vs_base, 2))]
+  kable(fr_tbl, caption = paste0("Table 3c. Fiscal policy deaths delayed by ",
+        "sensitivity variant (", impact_window, ") — EXPLORATORY."),
+        align = c("l","r","r")) |>
+    kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 12) |>
+    row_spec(0, bold = TRUE)
+} else cat("No fiscal scenarios present in outputs.\n")
+```
+
+Fiscal results are **exploratory**: the spread across `fiscal_low`/`base`/`high`
+reflects genuine uncertainty in tax rate, pass-through, elasticity, taxable share
+and substitution (Table M5) — they are **not** a confirmed estimate.
 
 ---
 
@@ -1959,36 +2168,61 @@ not as a validation target.
 # Limitations and interpretation
 
 - **Deaths delayed, not averted (sodium→SBP policies).** For public procurement,
-  FOPL, salt targets and fiscal, case fatality is held at baseline, so the
-  intervention lowers incidence and shifts mortality later; cumulative totals
-  depend on the accounting window. **LSS is the exception** — its trial-RR
-  pathway lowers stroke case fatality too, so LSS averts (not only delays) some
-  stroke deaths.
-- **Effect sizes are point estimates.** The per-source reductions (Table M2)
-  are deterministic; no probabilistic sensitivity analysis is run here.
-- **LSS coverage and household uptake are provisional.** The reported LSS
-  scenarios use the SSaSS trial RRs (stroke incidence 0.90; stroke case-fatality
-  multiplier 0.856), so the potassium benefit **is** captured — this is no
-  longer a "no-potassium lower bound". Remaining uncertainty is in the
-  provisional coverage assumptions (scenario 2 whole-population toggle; HTN
-  scenarios 4/5) and in **household uptake/spillover for scenarios 4/5**, which
-  is still under investigation. The 15%-discretionary sodium→SBP value is
-  retained only as a documented sensitivity.
-- **Source shares** are documented for the ten prioritised countries, but the
-  Nigeria/Cameroon values are **provisional** (RTSL/Matti working estimates, with
-  Nigeria used as a proxy for Cameroon) and several others rest on single-study
-  or older survey data; any country outside this set would fall back to the
-  `default` (mean) profile.
-- **Source shares** are documented for the ten prioritised countries, but the
-  Nigeria/Cameroon values are **provisional** (RTSL/Matti working estimates, with
-  Nigeria used as a proxy for Cameroon) and several others rest on single-study
-  or older survey data; any country outside this set would fall back to the
-  `default` (mean) profile.
+  FOPL, salt targets, fiscal, and the **primary Na/K→SBP LSS** method, case
+  fatality is held at baseline, so these lower incidence and shift mortality
+  later; cumulative totals depend on the accounting window. Only the optional
+  **SSaSS trial-RR benchmark** lowers stroke case fatality (averting, not only
+  delaying, some stroke deaths).
+- **NCD-RisC eligibility is age-standardised 30–79, not age-specific.** The
+  diagnosed/treated population shares that size LSS scenarios 4/5 are single
+  age-standardised values applied across all modelled ages, and the **post-2019
+  proportions are carried forward** unchanged. This misstates eligibility at the
+  age extremes and ignores any post-2019 diagnosis/treatment gains.
+- **LSS uptake and adherence are uncertain.** Uptake (adoption among the eligible)
+  and adherence (SSaSS yr-5 ≈ 0.92) are assumptions; the whole-population coverage
+  (s2) is a manual toggle. Household spillover is not modelled.
+- **K→SBP evidence is sparser than Na→SBP, and additivity is assumed.** The
+  potassium channel uses the Filippini (2020) achieved-excretion dose-response
+  with unit-conversion assumptions (39.1 mg/mmol; intake→excretion ÷1.3) and a
+  baseline-sodium modulation; the sodium- and potassium-mediated SBP changes are
+  **assumed additive** (a factor lets this be relaxed). The K evidence base is
+  thinner than for sodium.
+- **LSS is benefit-only — no hyperkalaemia/CKD harm channel.** Unlike Huang et
+  al., this disease model has no CKD state, so LSS benefits are **not offset** by
+  potential renal harms. LSS effects should be read as upper-ish estimates in
+  populations where hyperkalaemia risk matters.
+- **Baseline potassium** is from Reddin 2023 with a **region-mean fallback** for
+  countries absent from the source (Viet Nam → Southeast Asia; Ethiopia → Eastern
+  Sub-Saharan Africa), so those two rest on regional, not national, data.
+- **Na/K–SBP vs SSaSS applicability.** The two LSS methods are not
+  interchangeable: SSaSS RRs apply only to SSaSS-comparable (diagnosed/treated
+  HTN) populations and stroke outcomes, whereas Na/K–SBP covers all four causes
+  via SBP. They are reported side by side, never combined, and no single pathway
+  drives a cause twice.
+- **hstroke incidence quirk (pre-existing).** All sodium→SBP scenarios (including
+  Na/K–SBP LSS) inherit a known disease-model decomposition quirk that inflates
+  hemorrhagic-stroke *incidence* effects; the SSaSS benchmark path was corrected
+  for it, but fixing the root cause is out of scope here.
+- **Euromonitor trend: category definitions, extrapolation, composition-only.**
+  The packaged trend uses Matti's pre-combined v002 category set; the post-2030
+  rule (`r RC$euromonitor$post2030`) and the ceiling
+  (`r fmt_pct(RC$euromonitor$ceiling,0)`) are **extrapolation assumptions**, and
+  the trend reweights *composition* only — total sodium intake is held fixed.
+- **Fiscal policy is exploratory.** Pass-through, own-price elasticity, taxable
+  share and substitution are uncertain and applying broad-category elasticities
+  to high-sodium foods is contested; fiscal results are provisional, not
+  confirmed. Its package membership follows `include_fiscal_in_package`.
+- **Uncertainty not fully propagated.** Effect sizes, coverage, K→SBP anchors and
+  the Euromonitor growth CI are largely used as point estimates; no probabilistic
+  sensitivity analysis is run (the fiscal and Euromonitor CIs are shown but not
+  propagated into deaths-delayed).
+- **Source shares** for the ten prioritised countries are documented but several
+  (notably Nigeria/Cameroon, with Nigeria a proxy for Cameroon) are provisional;
+  any country outside the set falls back to the `default` (mean) profile. Public
+  procurement uses a stale school-inclusive 5% share pending adults-only inputs.
 - **Independent-cause structure.** The four causes share one population but are
   modelled independently, so "all-cause" prevalence/incidence sum cause-specific
   cases and may count comorbid individuals more than once.
-- **Diabetes weighting.** ETTEHAD diabetes-specific effect sizes are prepared in
-  the pipeline; the applied incidence modifier is the per-10-mmHg RR.
 
 ---
 
@@ -2276,8 +2510,17 @@ if (benchmark_available) {
 
 # ---- NUMBERS ----------------------------------------------------------------
 pkg_row <- dd_cum[as.character(scenario) == "full_package"]
-vn_sanity <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam",
-                                               source_shares, intervention_effects))
+vn_sanity <- as.numeric(compute_total_efficacy("public_procurement", "Viet Nam"))
+
+# Effect sizes come from the PUBLISHED table (RC$intervention_effects); the fiscal
+# base + Euromonitor + LSS constants come from run_config -> the deck states no
+# raw numbers the pipeline did not publish (Task 4i).
+eff_of  <- function(iv, src) { v <- intervention_effects[intervention == iv & source == src, effect]
+  if (length(v) == 0) NA_real_ else v[1] }
+.fiscal_scn2 <- if ("fiscal_base" %in% scenarios_present) "fiscal_base" else "fiscal"
+.he <- as.data.table(htn_eligibility)[location %in% RC$priority_countries]
+fa <- as.data.table(fiscal_audit)
+fa_base <- fa[variant %in% c("fiscal_base", "fiscal")][1]
 
 nums <- list(
   n_countries    = n_countries,
@@ -2292,46 +2535,57 @@ nums <- list(
   pkg_pct        = fmt_pct(pkg_row$pct_vs_base, 1),
   salt_targets_m = fmt_m(ddc("salt_targets"), 2),
   fopl_m         = fmt_m(ddc("fopl"), 2),
-  fiscal_m       = fmt_m(ddc("fiscal"), 2),
+  fiscal_m       = fmt_m(ddc(.fiscal_scn2), 2),
   public_m       = fmt_m(ddc("public_procurement"), 2),
-  # LSS scenarios 2/4/5 (SSaSS trial-RR pathway); media excluded from reporting
+  # LSS primary Na/K-SBP scenarios 2/4/5 + SSaSS benchmark (if present)
+  lss_method     = RC$lss$method,
   lss_s2_m       = fmt_m(ddc("lss_s2"), 2),
   lss_s4_m       = fmt_m(ddc("lss_s4"), 2),
   lss_s5_m       = fmt_m(ddc("lss_s5"), 2),
-  # LSS trial-RR constants + provisional coverage (surfaced for the deck)
+  lss_s4_ssass_m = fmt_m(ddc("lss_s4_ssass"), 2),
+  lss_s5_ssass_m = fmt_m(ddc("lss_s5_ssass"), 2),
+  # LSS Na/K constants + NCD-RisC eligibility (mean pop share across priority)
+  lss_nacl         = fmt_pct(RC$lss$nacl_fraction, 0),
+  lss_kcl          = fmt_pct(RC$lss$kcl_fraction, 0),
+  lss_adherence    = formatC(RC$lss$adherence, format = "f", digits = 2),
+  lss_additivity   = formatC(RC$lss$additivity_factor, format = "f", digits = 2),
+  lss_harms        = RC$lss$harms_modelled,
+  lss_cov_all      = fmt_pct(RC$lss$coverage_all, 0),
+  htn_dx_pop       = fmt_pct(mean(.he$diagnosed_pop, na.rm = TRUE), 0),
+  htn_tx_pop       = fmt_pct(mean(.he$treated_pop,   na.rm = TRUE), 0),
+  htn_source_year  = RC$htn_source_year,
+  # SSaSS benchmark constants (surfaced for the benchmark section only)
   lss_rr_stroke_inc = formatC(LSS_RR_STROKE_INC, format = "f", digits = 2),
   lss_cf_mult       = formatC(LSS_CF_MULT,       format = "f", digits = 3),
   lss_stroke_total  = formatC(LSS_STROKE_TOTAL,  format = "f", digits = 2),
-  lss_cov_all       = fmt_pct(LSS_COVERAGE_ALL, 0),
-  htn_dx_cov        = fmt_pct(HTN_DIAGNOSED_COV, 0),
-  htn_tx_cov        = fmt_pct(HTN_TREATED_COV, 0),
-  # applied per-source effect sizes (must mirror EFF_* in 07_run_interventions.R)
-  eff_public       = fmt_pct(EFF_PROCUREMENT_PUBLIC, 0),
-  eff_media        = fmt_pct(EFF_MEDIA, 1),
-  eff_fopl         = fmt_pct(EFF_FOPL_PACKAGED, 1),
-  eff_salttargets  = fmt_pct(EFF_SALTTARGETS_PACKAGED, 0),
-  eff_fiscal       = fmt_pct(EFF_FISCAL_PACKAGED, 0),
-  # fiscal decomposition (provisional; RTSL to confirm) -> eff_fiscal = base x taxable
-  fiscal_base_effect   = fmt_pct(FISCAL_EFFECT_ON_TAXED_PACKAGED, 0),
-  fiscal_taxable_share = fmt_pct(TAXABLE_PACKAGED_SHARE, 0),
-  eff_lss          = fmt_pct(EFF_LSS_DISCRETIONARY, 0),
-  lss_sens         = "0.12--0.18",
+  # applied per-source effect sizes (from the published intervention_effects)
+  eff_public       = fmt_pct(eff_of("public_procurement", "public"), 0),
+  eff_fopl         = fmt_pct(eff_of("fopl", "packaged"), 1),
+  eff_salttargets  = fmt_pct(eff_of("salt_targets", "packaged"), 0),
+  eff_fiscal       = fmt_pct(RC$fiscal$base_effect, 0),
+  # fiscal pathway (EXPLORATORY) from fiscal_audit base row
+  fiscal_status        = "exploratory",
+  fiscal_tax_rate      = fmt_pct(RC$fiscal$base$tax_rate, 0),
+  fiscal_taxable_share = fmt_pct(RC$fiscal$base$taxable_share, 0),
+  fiscal_in_package    = as.character(RC$fiscal$include_in_package),
+  eff_lss          = fmt_pct(eff_of("lss", "discretionary"), 0),
   vn_sanity        = formatC(vn_sanity, format = "f", digits = 4),
-  # PROVISIONAL: the public-procurement share is still the stale school-inclusive
-  # 5% flat value (code/07 ran with ADULT_POPULATION_ONLY = FALSE). RTSL owes the
-  # adults-only per-country shares, which will be smaller.
+  # PROVISIONAL: public-procurement share is still the stale school-inclusive 5%.
   public_share     = fmt_pct(source_shares[location == "Viet Nam", public], 1),
-  # Euromonitor packaged-food trend (Task 5) summary stats
+  # Euromonitor packaged-food trend (v002 combined) summary stats
+  euro_window      = RC$euromonitor$window,
+  euro_ceiling     = fmt_pct(RC$euromonitor$ceiling, 0),
+  euro_post2030    = RC$euromonitor$post2030,
   pkg_apc_median   = pkg_apc_median,
   pkg_apc_range    = pkg_apc_range,
   # worked composition example: FOPL + salt targets on 'packaged'
-  compose_fopl_salt = fmt_pct(1 - (1 - EFF_FOPL_PACKAGED) * (1 - EFF_SALTTARGETS_PACKAGED), 1),
-  # LSS / SSaSS trial constants (surfaced so the deck states no raw numbers itself)
+  compose_fopl_salt = fmt_pct(1 - (1 - eff_of("fopl","packaged")) * (1 - eff_of("salt_targets","packaged")), 1),
+  # SSaSS / LSS composition constants
   ssass_na_mgday   = "-350 mg/day",
   ssass_base_gday  = "4.3 g/day",
   ssass_sbp_mmhg   = "-3.34 mmHg",
   ssass_k_mgday    = "+803 mg/day",
-  lss_ratio        = "75% NaCl / 25% KCl",
+  lss_ratio        = paste0(fmt_pct(RC$lss$nacl_fraction,0), " NaCl / ", fmt_pct(RC$lss$kcl_fraction,0), " KCl"),
   # benchmark vs the 100 Million Lives Saved 30% population sodium reduction
   bench_n          = length(sel_countries),
   bench_current_m  = if (benchmark_available) fmt_m(bench_cur_tot, 2)  else "n/a",
@@ -2348,6 +2602,19 @@ nums <- list(
 nums <- lapply(nums, function(v)
   if (is.character(v)) gsub("%", "\\\\%", v, perl = TRUE) else v)
 
+# ---- NEW deck artifacts (Task 4i): year-specific shares, LSS Na/K pathway, ---
+# NCD-RisC eligibility, Na/K-vs-SSaSS, fiscal audit. Guarded so a skipped chunk
+# never breaks the bundle.
+if (exists("fig_pkg_time")) save_fig(fig_pkg_time, "fig_packaged_time.png", 10, 5)
+tex_ncd_eligibility <- if (exists("he_tbl")) mk_tex(as.data.frame(he_tbl),
+  align = c("l","l", rep("r",6))) else "\\emph{NCD-RisC eligibility unavailable.}"
+tex_lss_audit <- if (exists("la_tbl")) mk_tex(as.data.frame(la_tbl),
+  align = c("l","l", rep("r",8))) else "\\emph{LSS audit unavailable.}"
+tex_fiscal_audit <- if (exists("fa_tbl")) mk_tex(as.data.frame(fa_tbl),
+  align = c("l", rep("r",10))) else "\\emph{Fiscal audit unavailable.}"
+tex_nak_ssass <- if (exists("cmp_tbl")) mk_tex(as.data.frame(cmp_tbl),
+  align = c("l","l","l", rep("r",5))) else "\\emph{Na/K-vs-SSaSS comparison unavailable.}"
+
 figs <- list(
   source_shares = "fig_source_shares.png",
   salteff       = "fig_salteff.png",
@@ -2359,16 +2626,21 @@ figs <- list(
   results_bar   = "fig_results_bar.png",
   bycause       = "fig_bycause.png",
   countries     = "fig_countries.png",
-  benchmark     = "fig_benchmark.png"
+  benchmark     = "fig_benchmark.png",
+  packaged_time = "fig_packaged_time.png"   # NEW: packaged share over time by country
 )
 
 tex <- list(
-  effect_sizes   = tex_effect_sizes,
-  salteff        = tex_salteff,
-  source_shares  = tex_source_shares,
-  packaged_trend = tex_packaged_trend,
-  results        = tex_results,
-  benchmark      = tex_benchmark
+  effect_sizes    = tex_effect_sizes,
+  salteff         = tex_salteff,
+  source_shares   = tex_source_shares,
+  packaged_trend  = tex_packaged_trend,
+  results         = tex_results,
+  benchmark       = tex_benchmark,
+  ncd_eligibility = tex_ncd_eligibility,   # NEW (Task 4i)
+  lss_audit       = tex_lss_audit,         # NEW
+  fiscal_audit    = tex_fiscal_audit,      # NEW
+  nak_vs_ssass    = tex_nak_ssass          # NEW
 )
 
 deck <- list(nums = nums, figs = figs, tex = tex)

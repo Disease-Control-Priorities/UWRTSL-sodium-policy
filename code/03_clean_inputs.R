@@ -4,56 +4,114 @@
 #...........................................................
 
 #...........................................................
-# Task 4a: Euromonitor packaged-food consumption trend ----
+# Task 3a: Euromonitor packaged-food trend (v002 workbook) ----
 #...........................................................
-# Ingest the "Predictions (2025-2030)" APC (annual % change) forecasts and
-# collapse to ONE growth rate per country. We use the MEDIAN APC over
-# hand-picked, NON-OVERLAPPING, sodium-relevant LEAF categories. The workbook's
-# `code` column encodes a parent/child hierarchy, e.g.
-#   "Meals and Soups" (3.2) > "Ready Meals" (3.2.1), "Soup" (3.2.2)
-#   "Dairy"           (4.2) > "Cheese"      (4.2.1b)
-# so averaging every row would double-count. The two PARENTS (3.2, 4.2) are
-# therefore EXCLUDED; their sodium-relevant children are kept. Labels below were
-# confirmed verbatim against the workbook (2026-07-22).
+# Matti's v002 workbook (Euromonitor_trends_RTSL_v002.xlsx) REPLACES the old
+# leaf-category derivation. Each geography now carries a PRE-COMBINED row
+#   series_category == "Combined selected sodium-sources categories"  (code 0)
+# that already combines the sodium-relevant categories into ONE trend per
+# geography, WITH confidence intervals. We consume that row directly instead of
+# taking a median over hand-picked leaf categories.
 #
-# NB: geography -> model-location mapping (only "Vietnam" -> "Viet Nam" among
-# these 10 countries) is NOT done here: name_map is defined in
-# 05_build_baseline.R, which is sourced AFTER this file. The mapping AND the
-# application to source shares happen in 07_run_interventions.R (Task 4b), which
-# reads the per-geography table written below.
-if (file.exists(paste0(wd_raw, "Euromonitor_trends_RTSL.xlsx"))) {
+# Output (data/processed/packaged_food_trends.rds): one row per model location
+#   location : canonical model name (Vietnam -> "Viet Nam" via name_map)
+#   g        : packaged-share growth rate, FRACTION per year (apc / 100)
+#   g_lcl    : lower 95% bound (fraction/yr)
+#   g_ucl    : upper 95% bound (fraction/yr)
+#   window   : which sheet the trend came from
+#
+# Controls (resolved via get0 so 03 is robust when sourced by a bespoke driver
+# that did not set them; canonical values live in 07 SECTION 0 / run_config):
+#   EUROMONITOR_WINDOW           : "predictions" (2025-2030, default) |
+#                                  "observed" (2011-2025) | "post_covid" (2023-2025)
+#   EUROMONITOR_RECOMBINE_FROM_LEAVES : FALSE (default) uses Matti's combined row;
+#                                  TRUE reproduces the OLD median-over-leaves method
+#                                  (kept only as a fallback / cross-check).
+# NB: v002 has NO sales-volume column, so volume weighting is NOT implemented
+# here (see the clearly-labelled stub below). name_map comes from 01_utils.R
+# (sourced before 03).
 
-  # Non-overlapping, sodium-relevant LEAF categories (exact labels from file).
-  # Excluded parents (avoid double-counting): "Meals and Soups" (3.2), "Dairy" (4.2).
-  sodium_leaf_categories <- c(
-    "Sauces, Dips and Condiments",                      # 3.3
-    "Soup",                                             # 3.2.2  (leaf of Meals and Soups)
-    "Ready Meals",                                      # 3.2.1  (leaf of Meals and Soups)
-    "Processed Meat, Seafood and Alternatives to Meat", # 5.4
-    "Savoury Snacks",                                   # 6.3
-    "Cheese",                                           # 4.2.1b (leaf of Dairy)
-    "Baked Goods",                                      # 5.1
-    "Rice, Pasta and Noodles"                           # 5.5
-  )
+.euro_window   <- get0("EUROMONITOR_WINDOW",                ifnotfound = "predictions")
+.euro_recomb   <- isTRUE(get0("EUROMONITOR_RECOMBINE_FROM_LEAVES", ifnotfound = FALSE))
+.euro_file_v2  <- paste0(wd_raw, "Euromonitor_trends_RTSL_v002.xlsx")
+.euro_file_v1  <- paste0(wd_raw, "Euromonitor_trends_RTSL.xlsx")
 
-  eu_pkg <- as.data.table(read_excel(
-    paste0(wd_raw, "Euromonitor_trends_RTSL.xlsx"),
-    sheet = "Predictions (2025-2030)"
-  ))
-  eu_pkg <- eu_pkg[series_category %in% sodium_leaf_categories]
+# window -> (sheet, apc-column stem). "observed" uses `aapc`; the others `apc`.
+.euro_sheet <- switch(.euro_window,
+  "predictions" = "Predictions (2025-2030)",
+  "observed"    = "All observed (2011-2025)",
+  "post_covid"  = "Post-COVID (2023-2025)",
+  stop("EUROMONITOR_WINDOW must be 'predictions', 'observed', or 'post_covid'."))
+.euro_stem  <- if (.euro_window == "observed") "aapc" else "apc"
 
-  # One growth rate per geography = MEDIAN APC (robust to category heterogeneity)
-  # over the leaf categories, expressed as a fraction per year.
-  packaged_food_trends <- eu_pkg[
-    , .(g = median(as.numeric(apc), na.rm = TRUE) / 100), by = geography
-  ]
+if (file.exists(.euro_file_v2)) {
 
-  saveRDS(packaged_food_trends,
-          file = paste0(wd_data, "packaged_food_trends.rds"))
-  cat(sprintf(
-    "Task 4a: packaged_food_trends written for %d geographies (median APC over %d leaf categories).\n",
-    nrow(packaged_food_trends), length(sodium_leaf_categories)))
-  rm(eu_pkg)
+  if (!.euro_recomb) {
+    # ---- PRIMARY path: consume the pre-combined per-geography row ------------
+    eu <- as.data.table(read_excel(.euro_file_v2, sheet = .euro_sheet))
+    comb <- eu[series_category == "Combined selected sodium-sources categories"]
+    if (nrow(comb) == 0L) {
+      stop("Task 3a: no 'Combined selected sodium-sources categories' row in sheet '",
+           .euro_sheet, "' of ", basename(.euro_file_v2))
+    }
+    col_c <- .euro_stem
+    col_l <- paste0(.euro_stem, "_lcl")
+    col_u <- paste0(.euro_stem, "_ucl")
+    packaged_food_trends <- comb[, .(
+      geography,
+      g     = as.numeric(get(col_c)) / 100,
+      g_lcl = as.numeric(get(col_l)) / 100,
+      g_ucl = as.numeric(get(col_u)) / 100
+    )]
+    packaged_food_trends[, window := .euro_window]
+    # geography -> model location (only "Vietnam" -> "Viet Nam" among these 10).
+    packaged_food_trends[, location := fcoalesce(name_map[geography], geography)]
+    packaged_food_trends[, geography := NULL]
+    setcolorder(packaged_food_trends, c("location", "g", "g_lcl", "g_ucl", "window"))
+
+    saveRDS(packaged_food_trends, file = paste0(wd_data, "packaged_food_trends.rds"))
+    cat(sprintf(
+      "Task 3a: packaged_food_trends written from v002 COMBINED row for %d geographies (window = %s).\n",
+      nrow(packaged_food_trends), .euro_window))
+
+  } else {
+    # ---- FALLBACK: OLD median-over-leaves method (cross-check only) ----------
+    # Non-overlapping, sodium-relevant LEAF categories (exact labels). Parents
+    # "Meals and Soups" and "Dairy" are EXCLUDED to avoid double-counting their
+    # children. Retained so we can reproduce the pre-v002 number if ever needed.
+    sodium_leaf_categories <- c(
+      "Sauces, Dips and Condiments", "Soup", "Ready Meals",
+      "Processed Meat, Seafood and Alternatives to Meat", "Savoury Snacks",
+      "Cheese", "Baked Goods", "Rice, Pasta and Noodles")
+    eu <- as.data.table(read_excel(.euro_file_v2, sheet = .euro_sheet))
+    eu <- eu[series_category %in% sodium_leaf_categories]
+    packaged_food_trends <- eu[, .(
+      g     = median(as.numeric(get(.euro_stem)), na.rm = TRUE) / 100,
+      g_lcl = NA_real_, g_ucl = NA_real_
+    ), by = geography]
+    packaged_food_trends[, window := paste0(.euro_window, "_recombine_leaves")]
+    packaged_food_trends[, location := fcoalesce(name_map[geography], geography)]
+    packaged_food_trends[, geography := NULL]
+    setcolorder(packaged_food_trends, c("location", "g", "g_lcl", "g_ucl", "window"))
+    saveRDS(packaged_food_trends, file = paste0(wd_data, "packaged_food_trends.rds"))
+    cat(sprintf(
+      "Task 3a: packaged_food_trends REBUILT via legacy median-over-leaves (%d leaves, window = %s).\n",
+      length(sodium_leaf_categories), .euro_window))
+  }
+
+  # ---- STUB (do NOT implement now): volume-weighted recombine ---------------
+  # v002 has no sales-volume column. If a future workbook adds per-category sales
+  # volumes, a "volume_weighted" recombine could weight each leaf category's APC
+  # by its sodium-relevant sales volume before combining. Until then we rely on
+  # Matti's pre-combined row above.
+
+  rm(eu)
+
+} else if (file.exists(.euro_file_v1)) {
+  stop("Task 3a: only the OLD Euromonitor_trends_RTSL.xlsx is present; v002 ",
+       "(Euromonitor_trends_RTSL_v002.xlsx) is required for the combined-row trend.")
 } else {
-  cat("Task 4a: Euromonitor_trends_RTSL.xlsx not found in wd_raw; packaged trend input NOT built.\n")
+  cat("Task 3a: no Euromonitor workbook found in wd_raw; packaged trend input NOT built.\n")
 }
+
+rm(.euro_window, .euro_recomb, .euro_file_v1, .euro_file_v2, .euro_sheet, .euro_stem)

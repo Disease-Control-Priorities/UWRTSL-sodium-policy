@@ -159,3 +159,224 @@ create_age_groups <- function(age) {
     include.lowest = TRUE
   )
 }
+
+#...........................................................
+## Canonical name map + priority countries (shared) ----
+#...........................................................
+# SINGLE SOURCE OF TRUTH for the raw-source -> model-location name mapping.
+# Historically this lived only in 05_build_baseline.R; it is defined here (01,
+# sourced first) so the input builders below (Task 1a: htn_eligibility,
+# baseline_potassium) can reuse the SAME mapping, and 05 reuses it too. Keys are
+# the raw spellings; values are the model's canonical location names.
+name_map <- c(
+  "Brunei"                            = "Brunei Darussalam",
+  "Cape Verde"                        = "Cabo Verde",
+  "Cote d'Ivoire"                     = "Ivory Coast",
+  "Czech Republic"                    = "Czechia",
+  "Federated States of Micronesia"    = "Micronesia (Federated States of)",
+  "Iran"                              = "Iran (Islamic Republic of)",
+  "Laos"                              = "Lao People's Democratic Republic",
+  "Macedonia"                         = "North Macedonia",
+  "Moldova"                           = "Republic of Moldova",
+  "South Korea"                       = "Republic of Korea",
+  "Swaziland"                         = "Eswatini",
+  "Syria"                             = "Syrian Arab Republic",
+  "The Bahamas"                       = "Bahamas",
+  "The Gambia"                        = "Gambia",
+  "Venezuela"                         = "Venezuela (Bolivarian Republic of)",
+  "Vietnam"                           = "Viet Nam",
+  "North Korea"                       = "Democratic People's Republic of Korea"
+)
+
+# The 10 RTSL priority countries the model is run for (canonical model names).
+# Mirrors the `locs` vector hard-coded in 07_run_interventions.R SECTION 12; kept
+# here so the Task-1a input builders can hard-check coverage against the exact
+# modelled set.
+PRIORITY_COUNTRIES <- c(
+  "Viet Nam", "Philippines", "Bangladesh", "China", "Ethiopia",
+  "India", "Malaysia", "Thailand", "Cameroon", "Nigeria"
+)
+
+#...........................................................
+## Task 1a: NCD-RisC hypertension eligibility ----
+#...........................................................
+#' Build the per-country-and-sex hypertension eligibility table used to size the
+#' LSS diagnosed/treated scenarios (Task 1d), replacing the old BP>=140 proxy.
+#'
+#' Source: NCD-RisC Lancet 2021 age-standardised country file. IMPORTANT: these
+#' are AGE-STANDARDISED 30-79 estimates, NOT age-specific; they are used as a
+#' single per-country-and-sex population share and carried forward to later model
+#' years (there is no post-2019 dx/tx series). Sexes Men/Women are mapped to the
+#' model's Male/Female.
+#'
+#' Derived POPULATION shares (fed to LSS eligibility as coverage):
+#'   diagnosed_pop = htn_prev * diagnosed_cond    (P(HTN) x P(dx | HTN))
+#'   treated_pop   = htn_prev * treated_cond      (P(HTN) x P(tx | HTN))
+#'
+#' UI handling (documented choice): the conditional and prevalence 95% UIs are
+#' carried through; the *_pop UIs are a simple product of the corresponding
+#' bounds (prev_lcl*cond_lcl, prev_ucl*cond_ucl). That is a transparent lower/upper
+#' envelope, NOT a formally propagated CI (independence/quantile assumptions do
+#' not hold); the report labels it as such.
+#'
+#' @param wd_raw,wd_data  Path vars (no absolute paths baked in).
+#' @param name_map        Shared raw->model name map (defaults to the one above).
+#' @param source_year     Year used and carried forward (HTN_SOURCE_YEAR = 2019).
+#' @param required_locations If non-NULL, stop() unless every location x
+#'        {Male,Female} has non-NA diagnosed_pop AND treated_pop (no silent
+#'        fallback to old constants).
+#' @param write           Save htn_eligibility.rds to wd_data.
+#' @return data.table (location, country_raw, iso3, sex, source_year, htn_prev
+#'         (+lcl/ucl), diagnosed_cond (+lcl/ucl), treated_cond (+lcl/ucl),
+#'         control_cond, diagnosed_pop (+lcl/ucl), treated_pop (+lcl/ucl)).
+build_htn_eligibility <- function(wd_raw, wd_data,
+                                  name_map           = get0("name_map"),
+                                  source_year        = 2019,
+                                  required_locations = NULL,
+                                  write              = TRUE) {
+  stopifnot(!is.null(name_map))
+  f <- file.path(wd_raw, "NCD-RisC_Lancet_2021_Hypertension_age_standardised_countries.csv")
+  if (!file.exists(f)) stop("build_htn_eligibility(): missing input ", f)
+  d <- data.table::fread(f)
+
+  d <- d[Year == source_year]
+  d[, sex := data.table::fifelse(Sex == "Men", "Male",
+             data.table::fifelse(Sex == "Women", "Female", NA_character_))]
+  d <- d[!is.na(sex)]
+
+  elig <- d[, .(
+    country_raw        = `Country/Region/World`,
+    iso3               = ISO,
+    sex                = sex,
+    source_year        = Year,
+    htn_prev           = `Prevalence of hypertension`,
+    htn_prev_lcl       = `Prevalence of hypertension lower 95% uncertainty interval`,
+    htn_prev_ucl       = `Prevalence of hypertension upper 95% uncertainty interval`,
+    diagnosed_cond     = `Proportion of diagnosed hypertension among all hypertension`,
+    diagnosed_cond_lcl = `Proportion of diagnosed hypertension among all hypertension lower 95% uncertainty interval`,
+    diagnosed_cond_ucl = `Proportion of diagnosed hypertension among all hypertension upper 95% uncertainty interval`,
+    treated_cond       = `Proportion of treated hypertension among all hypertension`,
+    treated_cond_lcl   = `Proportion of treated hypertension among all hypertension lower 95% uncertainty interval`,
+    treated_cond_ucl   = `Proportion of treated hypertension among all hypertension upper 95% uncertainty interval`,
+    control_cond       = `Proportion of controlled hypertension among all hypertension`
+  )]
+
+  # Map raw -> model location names (NCD-RisC already uses "Viet Nam"; fcoalesce
+  # leaves any name not in the map unchanged).
+  elig[, location := data.table::fcoalesce(name_map[country_raw], country_raw)]
+
+  # Derived population shares + transparent UI envelope (see docstring).
+  elig[, diagnosed_pop     := htn_prev     * diagnosed_cond]
+  elig[, treated_pop       := htn_prev     * treated_cond]
+  elig[, diagnosed_pop_lcl := htn_prev_lcl * diagnosed_cond_lcl]
+  elig[, diagnosed_pop_ucl := htn_prev_ucl * diagnosed_cond_ucl]
+  elig[, treated_pop_lcl   := htn_prev_lcl * treated_cond_lcl]
+  elig[, treated_pop_ucl   := htn_prev_ucl * treated_cond_ucl]
+
+  data.table::setcolorder(elig, c("location", "country_raw", "iso3", "sex", "source_year"))
+
+  # Hard check: no silent fallback to the old 0.33/0.25 constants (Task 1a/1d).
+  if (!is.null(required_locations)) {
+    need <- data.table::CJ(location = required_locations, sex = c("Male", "Female"))
+    have <- elig[!is.na(diagnosed_pop) & !is.na(treated_pop), .(location, sex)]
+    miss <- need[!have, on = c("location", "sex")]
+    if (nrow(miss) > 0L) {
+      stop("build_htn_eligibility(): missing non-NA diagnosed_pop/treated_pop for modelled ",
+           "country x sex:\n",
+           paste(sprintf("  - %s / %s", miss$location, miss$sex), collapse = "\n"))
+    }
+  }
+
+  if (isTRUE(write)) {
+    if (missing(wd_data) || is.null(wd_data)) stop("wd_data must be supplied when write = TRUE")
+    saveRDS(elig, file.path(wd_data, "htn_eligibility.rds"))
+  }
+  elig[]
+}
+
+#...........................................................
+## Task 1a: Baseline potassium intake (Reddin 2023) ----
+#...........................................................
+#' Build baseline potassium intake (g/day) by model location x sex from Reddin
+#' et al. 2023 (eTable III), with a sex-specific REGION-MEAN fallback for any
+#' modelled country absent from the source. Viet Nam and Ethiopia are absent and
+#' inherit their GBD region mean (Viet Nam -> "Southeast Asia"; Ethiopia ->
+#' "Eastern Sub Saharan Africa"), per instruction. Feeds the LSS Na/K->SBP
+#' potassium channel (Task 1b).
+#'
+#' @param absent_region_map Named vector model-location -> Reddin region for
+#'        countries absent from Reddin (extend here for new modelled countries).
+#' @return data.table (location, sex, k_intake_g, k_lcl, k_ucl, region, source
+#'         in {"reddin2023","reddin2023_region_fallback"}).
+build_baseline_potassium <- function(wd_raw, wd_data,
+                                      name_map           = get0("name_map"),
+                                      required_locations = NULL,
+                                      absent_region_map  = c(
+                                        "Viet Nam" = "Southeast Asia",
+                                        "Ethiopia" = "Eastern Sub Saharan Africa"),
+                                      write              = TRUE) {
+  stopifnot(!is.null(name_map))
+  f <- file.path(wd_raw, "Reddin2023_potassium_intake_etable_III_LSS.csv")
+  if (!file.exists(f)) stop("build_baseline_potassium(): missing input ", f)
+  d <- data.table::fread(f)
+  d <- d[sex %in% c("Male", "Female")]                    # drop "Both" (model is sexed)
+  d[, location := data.table::fcoalesce(name_map[country], country)]
+
+  # Sex-specific region means (fallback source).
+  region_means <- d[, .(k_intake_g = mean(estimate),
+                        k_lcl       = mean(lower_ci),
+                        k_ucl       = mean(upper_ci)),
+                    by = .(region, sex)]
+
+  # Direct country values.
+  direct <- d[, .(location, sex, region,
+                  k_intake_g = estimate, k_lcl = lower_ci, k_ucl = upper_ci,
+                  source = "reddin2023")]
+
+  targets <- if (is.null(required_locations)) unique(direct$location) else required_locations
+  grid <- data.table::CJ(location = targets, sex = c("Male", "Female"))
+
+  out <- merge(grid, direct, by = c("location", "sex"), all.x = TRUE)
+
+  # Region-mean fallback for absent locations.
+  miss_idx <- out[is.na(k_intake_g), which = TRUE]
+  if (length(miss_idx) > 0L) {
+    for (i in miss_idx) {
+      loc <- out$location[i]; sx <- out$sex[i]
+      reg <- absent_region_map[[loc]]
+      if (is.null(reg)) {
+        stop("build_baseline_potassium(): '", loc, "' is absent from Reddin and has no ",
+             "entry in absent_region_map (add its GBD region to enable the region-mean fallback).")
+      }
+      rm_row <- region_means[region == reg & sex == sx]
+      if (nrow(rm_row) == 0L) {
+        stop("build_baseline_potassium(): no region-mean for region '", reg, "' / ", sx)
+      }
+      data.table::set(out, i, "region",     reg)
+      data.table::set(out, i, "k_intake_g", rm_row$k_intake_g)
+      data.table::set(out, i, "k_lcl",      rm_row$k_lcl)
+      data.table::set(out, i, "k_ucl",      rm_row$k_ucl)
+      data.table::set(out, i, "source",     "reddin2023_region_fallback")
+    }
+  }
+
+  # Diagnostic: which countries used the region fallback (Viet Nam, Ethiopia expected).
+  fb <- out[source == "reddin2023_region_fallback", unique(location)]
+  cat(sprintf("build_baseline_potassium(): %d location x sex rows; region-mean fallback used for: %s\n",
+              nrow(out), if (length(fb)) paste(fb, collapse = ", ") else "(none)"))
+
+  # Hard check: every modelled country x sex must resolve to a non-NA value.
+  if (!is.null(required_locations)) {
+    miss <- out[is.na(k_intake_g), .(location, sex)]
+    if (nrow(miss) > 0L) {
+      stop("build_baseline_potassium(): unresolved baseline potassium for:\n",
+           paste(sprintf("  - %s / %s", miss$location, miss$sex), collapse = "\n"))
+    }
+  }
+
+  if (isTRUE(write)) {
+    if (missing(wd_data) || is.null(wd_data)) stop("wd_data must be supplied when write = TRUE")
+    saveRDS(out, file.path(wd_data, "baseline_potassium.rds"))
+  }
+  out[]
+}

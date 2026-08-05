@@ -550,6 +550,27 @@ ncdr <- read.csv(paste0(wd_raw,"NCD-RisC/","NCD-RisC_Lancet_2021_Hypertension_ag
   mutate(change = shift(control, type='lead')- control,
          r_change = 100*change/control)
 
+#...........................................................
+# Task 1a: NCD-RisC eligibility + baseline potassium inputs ----
+#...........................................................
+# Canonical home for the LSS eligibility + baseline-potassium inputs (Task 1a).
+# These extend the NCD-RisC usage above (which only pulled `control`) to ALSO
+# emit the diagnosed/treated population shares, and add baseline potassium from
+# Reddin 2023. The heavy lifting lives in reusable builders in 01_utils.R so the
+# SAME code also runs from 07_run_interventions.R (which is what the standard,
+# 02-skipped run recipe executes). Building here keeps a full 00_run_model.R run
+# self-consistent. HTN_SOURCE_YEAR is a named control (2019 = most recent).
+HTN_SOURCE_YEAR <- 2019
+build_htn_eligibility(
+  wd_raw, wd_data, name_map,
+  source_year        = HTN_SOURCE_YEAR,
+  required_locations = PRIORITY_COUNTRIES, write = TRUE
+)
+build_baseline_potassium(
+  wd_raw, wd_data, name_map,
+  required_locations = PRIORITY_COUNTRIES, write = TRUE
+)
+cat("Task 1a: htn_eligibility.rds + baseline_potassium.rds written to", wd_data, "\n")
 
 #https://www.statology.org/quadratic-regression-r/
 

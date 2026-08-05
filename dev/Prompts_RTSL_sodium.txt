@@ -1571,3 +1571,455 @@ Report Task 4 addenda:
     based with unit-conversion assumptions.
 	
 
+######################3
+
+Please update and refactor the presentation
+
+  docs/UWRTSL-sodium-policy-20260806.Rmd
+
+and its analytical/reporting backend
+
+  reports/report.RMD
+
+to reflect the CURRENT implementation of the UW/RTSL sodium-policy model and the decisions/work completed since the previous meeting.
+
+## IMPORTANT: THIS IS A TARGETED UPDATE, NOT A FULL REFACTOR
+
+Do NOT substantially refactor or restructure either file.
+
+Preserve the current structure, organization, visual style, object flow, and narrative of:
+
+- reports/report.RMD
+- docs/UWRTSL-sodium-policy-20260806.Rmd
+
+Preserve the current presentation narrative and structure.
+
+Instead, inspect the existing deck and identify the smallest set of changes required
+
+
+The objective is to UPDATE the existing report and slide deck so they accurately reflect the modeling work completed since the previous meeting, particularly:
+
+1. the new mechanistic LSS model;
+2. the new fiscal-policy model;
+3. the relevant Huang et al. LSS comparison;
+4. the relevant Saxena et al. Philippines fiscal-policy comparison;
+5. updated results/uncertainty where already produced by the pipeline.
+
+Use the existing deck as the starting point.
+
+IMPORTANT ARCHITECTURAL RULE
+
+reports/report.RMD should produce ALL calculations, tables, plots, numbers, and presentation artifacts.
+
+docs/UWRTSL-sodium-policy-20260806.Rmd should only consume objects/artifacts created by reports/report.RMD, preferably through the existing docs/deck_assets/ mechanism.
+
+Do NOT reimplement model calculations inside the slide deck.
+
+Do NOT modify the underlying model/pipeline code as part of this task. The task is to bring the report and presentation into alignment with what the pipeline currently implements.
+
+
+## 1. FIRST: inspect the repository and establish the source of truth
+
+Before editing, inspect:
+
+- the current model/intervention code, especially the LSS and fiscal-policy implementations;
+- reports/report.RMD;
+- docs/UWRTSL-sodium-policy-20260806.Rmd;
+- run_config and scenario definitions;
+- any lss_audit.rds / fiscal_audit.rds interfaces expected by the report;
+- the July meeting notes/emails in library/;
+- the Huang et al. 2026 LSS modeling paper in library/;
+- the Saxena et al. 2025 Philippines tax modeling study in library/.
+
+Relevant reference files in library/ include filenames similar to:
+
+- LSS 2026.04.06.26350270v1.full*.pdf
+- Saxena et al 2025 - Estimated health impact, cost, and cost-effectiveness of taxation in Philipines*.pdf
+- July 23 meeting notes / Outlook summary PDF
+
+Do not assume that the older text in the slide deck represents the current model. Where there is disagreement:
+
+1. current production code/configuration is the source of truth for what WE implement;
+2. reports/report.RMD should faithfully document that implementation;
+3. Huang and Saxena are comparators/references, not specifications that should silently replace our implementation.
+
+
+## 2. Incorporate the July 23 meeting decisions
+
+The revised deck should clearly show what has changed since the prior meeting.
+
+In particular, the July discussion concluded:
+
+### LSS
+
+Two approaches had been considered:
+
+1. direct use of SSaSS trial relative risks;
+2. mechanistic modeling of sodium + potassium changes -> SBP -> CVD.
+
+The direct SSaSS RR approach was problematic for the general-population scenario because SSaSS participants were predominantly higher-risk and because it could not naturally represent scenario 2.
+
+The agreed direction was therefore to investigate and implement the Na/K mechanistic approach consistent with Matti/Huang et al.
+
+This work has now been done.
+
+The deck must therefore NOT say that the primary/current LSS model is "SSaSS trial RRs capturing potassium."
+
+Instead, explain that:
+
+- the PRIMARY LSS model is now Na/K -> SBP -> CVD;
+- SSaSS direct RRs are retained only as a benchmark/sensitivity analysis for appropriate targeted scenarios;
+- the two approaches are not combined, avoiding double counting.
+
+### Fiscal policy
+
+The July discussion emphasized:
+
+- limited empirical evidence for taxation specifically targeting high-sodium foods;
+- uncertainty in transferring price elasticities from other foods/SSBs;
+- preference for a simple and transparent Bloomberg modeling approach;
+- Philippines/Saxena et al. as the main modeling reference;
+- sensitivity analysis because of large parameter uncertainty.
+
+The model has subsequently been refactored into an explicit tax -> price -> demand -> sodium pathway. The deck should explain this rather than the older opaque fixed-effect implementation.
+
+### Euromonitor
+
+Retain/update the decision to use country-specific packaged-food trends where available rather than one global APC. This remains relevant context but should not displace the main emphasis of this revision, which is LSS and fiscal policy.
+
+But not forget to include and highligth the new Euromotinor data included as in Report
+
+# 3. Refactor the LSS methods section
+
+Devote approximately 1-2 MAIN-DECK slides to LSS.
+
+The slides need to be executive-readable but technically defensible.
+
+### Slide A: "Low-sodium salt substitutes: current implementation"
+
+Show the current causal pathway visually and mathematically:
+
+LSS adoption
+  -> less sodium + more potassium
+  -> lower SBP
+  -> lower CVD incidence
+  -> deaths delayed
+
+Use the actual implementation/configuration rather than hardcoding values when they are available from run_config/lss_audit.
+
+Document the current model, including as applicable:
+
+- 75% NaCl / 25% KCl formulation;
+- discretionary sodium targeted under the relevant scenarios;
+- uptake/adherence;
+- sodium displacement;
+- WHO 2 g/day sodium floor;
+- sodium -> SBP effect, with the current raised-BP vs normal-BP implementation;
+- potassium added stoichiometrically when sodium chloride is displaced;
+- baseline potassium from Reddin et al.;
+- potassium intake -> urinary/excretion conversion;
+- Filippini potassium -> SBP nonlinear/U-shaped dose-response;
+- modification by baseline sodium;
+- attenuation among non-hypertensive people, if currently implemented;
+- additive Na and K contributions to SBP;
+- downstream SBP -> CVD incidence model;
+- affected modeled CVD causes.
+
+Make the central equation something conceptually like:
+
+ΔSBP_LSS = ΔSBP_Na + ΔSBP_K
+
+but use the exact current implementation and parameters.
+
+### Coverage scenarios
+
+Clearly describe the currently implemented LSS scenarios.
+
+In particular, verify from the code/config and show:
+
+- scenario 2: whole/general population;
+- scenario 4: diagnosed hypertension;
+- scenario 5: treated hypertension.
+
+For scenarios 4/5, clearly state that NCD-RisC diagnosed/treated population proportions are now used rather than simply defining eligibility from SBP >=140 model bins, if that remains the current implementation.
+
+### SSaSS benchmark
+
+Explain succinctly that the old/direct trial-RR approach is now a BENCHMARK, not the primary LSS model.
+
+If the current implementation retains:
+
+- stroke incidence RR = 0.90;
+- total/fatal stroke RR = 0.77;
+- conditional CF multiplier = 0.77 / 0.90;
+
+show those only if verified against code/config/report.
+
+Clarify:
+
+- SSaSS benchmark affects stroke;
+- mechanistic Na/K model feeds the broader SBP -> CVD pathway;
+- SSaSS and Na/K effects are NOT applied simultaneously;
+- no inappropriate SSaSS general-population scenario should be presented.
+
+
+# 4. Add a LSS comparison with Huang et al. 2026
+
+Create one slide, or combine with the previous slide if readable, explicitly titled something like:
+
+"How our LSS model compares with Huang et al. (2026)"
+
+Read the actual Huang paper in library/ and make a concise comparison table.
+
+At minimum compare:
+
+| Component | Huang et al. 2026 | Current UW/RTSL model |
+|---|---|---|
+| Overall approach | Na + K -> SBP -> disease | ... |
+| LSS formulation | 75% NaCl / 25% KCl | ... |
+| Sodium channel | ... | ... |
+| Potassium channel | ... | ... |
+| Population scenarios | 1-5 | current 2/4/5 |
+| HTN targeting | ... | NCD-RisC diagnosed/treated shares |
+| Outcomes | CVD + CKD | currently modeled CVD causes |
+| CKD/hyperkalemia harms | explicitly modeled in relevant Huang scenarios | currently NOT modeled / benefit-only, if verified |
+| Uncertainty | probabilistic + sensitivity analyses | current pipeline approach |
+| Role of SSaSS | evidence/input context | optional direct-RR benchmark |
+
+Important distinctions from Huang to surface:
+
+- Huang evaluates five strategies: all salt, discretionary salt, non-discretionary salt, diagnosed HTN, treated HTN.
+- Huang explicitly models potential hyperkalemia harms in CKD G3-5 for relevant population-wide scenarios.
+- Our current model is benefit-only with respect to potassium/CKD harms, if confirmed from the code.
+- Our project focuses on the RTSL priority countries and integrates LSS within the existing dynamic CVD model rather than reproducing Huang's full 193-country comparative-risk-assessment model.
+
+Do not frame departures as mistakes. Present them as differences in scope/implementation and flag genuine limitations.
+
+
+# 5. Completely update the fiscal-policy methods
+
+Devote approximately 1-2 MAIN-DECK slides to fiscal policy.
+
+The existing deck appears to contain stale language describing fiscal policy as essentially:
+
+fixed effect × taxable packaged share.
+
+Replace this with the CURRENT explicit behavioral pathway.
+
+Show conceptually:
+
+Tax
+ -> consumer price change
+ -> quantity response
+ -> taxed packaged-food consumption
+ -> packaged sodium
+ -> total sodium
+ -> SBP
+ -> CVD incidence
+
+Use the actual fiscal configuration/audit values rather than copying assumptions manually when possible.
+
+Explain mathematically:
+
+ΔP = tax rate × pass-through
+
+quantity response approximately:
+
+ΔQ/Q = elasticity × ΔP
+
+and then the implemented adjustments for:
+
+- substitution;
+- reformulation;
+- proportion of packaged sodium actually in taxable categories.
+
+Make clear that:
+
+tax rate != sodium reduction
+
+and
+
+not all packaged sodium is taxable.
+
+If verified as the current base case, explain the intuitive example:
+
+20% tax
+× 100% pass-through
+× elasticity of -0.50
+=> approximately 10% reduction in taxed products
+
+and if the taxable packaged share is 50%:
+
+=> approximately 5% reduction in total packaged-source sodium,
+
+BEFORE multiplying by the country's packaged share of total dietary sodium.
+
+But do NOT hardcode these values if the current run_config/fiscal_audit differs.
+
+Also show the current low/base/high sensitivity variants, preferably as a compact table generated in reports/report.RMD.
+
+The fiscal intervention must be clearly labelled EXPLORATORY/PROVISIONAL.
+
+Include sufficient mathematical detail to show exactly how the currently implemented LSS model translates sodium displacement and 
+potassium substitution into changes in SBP and CVD risk, and how the fiscal-policy model translates the tax rate, pass-through, 
+price elasticity, substitution/reformulation, and taxable packaged-sodium share into changes in sodium intake, SBP, and ultimately CVD outcomes.
+
+# 6. Add a comparison with Saxena et al. 2025
+
+Create a slide titled something like:
+
+"Fiscal policy: simplified UW/RTSL implementation vs Saxena et al. (Philippines)"
+
+Read Saxena et al. carefully and build a concise side-by-side comparison.
+
+Capture at least:
+
+### Saxena et al.
+
+- Philippines-specific modeling;
+- 20% excise tax;
+- tax eligibility based on WHO WPRO nutrient-profile thresholds;
+- packaged foods classified into detailed categories;
+- 100% pass-through in main analysis;
+- QUAIDS demand model;
+- own- and cross-price elasticities;
+- income/wealth-specific behavioral response;
+- taxed vs untaxed product substitution;
+- manufacturer reformulation for products sufficiently close to nutrient thresholds;
+- dynamic packaged-food-consumption trends;
+- sodium -> SBP -> CVD pathway;
+- broader multistate life-table/economic evaluation;
+- approximately 100 mg/day sodium reduction at year 20 in their modeled intervention;
+- health, equity, health-expenditure, tax-revenue, implementation-cost and cost-effectiveness outcomes.
+
+### Current UW/RTSL fiscal model
+
+Explain that ours intentionally simplifies this structure for a transparent multi-country Bloomberg exercise:
+
+tax rate
+× pass-through
+× elasticity
+× substitution/reformulation adjustment
+× taxable packaged share
+-> packaged sodium reduction
+-> total sodium reduction
+-> SBP
+-> CVD.
+
+Make particularly clear which elements of Saxena are NOT currently reproduced:
+
+- full QUAIDS demand system;
+- detailed category-specific own/cross elasticities;
+- wealth-quintile heterogeneity;
+- detailed item/category-specific taxation;
+- endogenous/product-level reformulation;
+- tax revenue and full economic evaluation, unless these have subsequently been implemented.
+
+The purpose is to show that Saxena provides the conceptual/empirical anchor, while our implementation is a deliberately simpler transferable approximation.
+
+Avoid implying that Saxena directly estimates a generic elasticity that can simply be transported to all countries.
+
+
+# 7. Refactor reports/report.RMD as the analytical source of presentation content
+
+reports/report.RMD should contain/generate all information needed for these revised slides.
+
+Where possible, use existing pipeline artifacts such as:
+
+- run_config.rds;
+- lss_audit.rds;
+- fiscal_audit.rds;
+- htn_eligibility.rds;
+- baseline_potassium.rds;
+- source_shares_by_year.rds.
+
+Do not duplicate parameter definitions in the report when they can be read from authoritative pipeline artifacts.
+
+Add or update deck artifacts for:
+
+1. LSS mechanistic pathway summary;
+2. LSS audit/current-parameter table;
+3. LSS scenarios/coverage table;
+4. Na/K model vs SSaSS benchmark results, if available;
+5. Huang vs UW/RTSL comparison;
+6. fiscal causal pathway/current parameters;
+7. fiscal low/base/high sensitivity table or figure;
+8. Saxena vs UW/RTSL comparison;
+9. any updated fiscal/LSS results figures needed by the presentation.
+
+Prefer creating reusable objects in deck_data.rds and/or figures in docs/deck_assets/.
+
+
+# 8. Refactor the presentation narrative
+
+The main deck is for an RTSL/client meeting, not a manuscript.
+
+Do not blindly force this structure if the existing deck has a better executive narrative. Refactor rather than unnecessarily rewrite good existing slides.
+
+
+# 9. Remove stale claims
+
+Search the entire deck for stale statements such as:
+
+- "potassium captured via SSaSS trial RRs";
+- "LSS now uses SSaSS trial relative risks as approach B";
+- "country-specific elasticity model is future work";
+- fiscal = fixed effect × taxable packaged share;
+- LSS case fatality is changed in the PRIMARY model;
+- LSS only affects stroke.
+
+Update these wherever they contradict the present implementation.
+
+The key distinction throughout must be:
+
+PRIMARY LSS:
+Na/K -> SBP -> CVD incidence; CF unchanged.
+
+BENCHMARK:
+SSaSS direct stroke RR pathway; stroke IR + conditional CF effects.
+
+Do not accidentally mix these two pathways.
+
+
+# 10. Citations
+
+Make sure Huang et al. 2026 and Saxena et al. 2025 are properly cited in the slides and bibliography. As well as Filipini potassium meta analysis and reddin et al 2023
+
+Use the existing bibliography/reference infrastructure if possible.
+
+Do not invent bibliographic information. Extract/verify it from the PDFs or existing .bib files.
+
+
+# 11. Validation
+
+After editing:
+
+1. Render/knit reports/report.RMD first.
+2. Confirm all docs/deck_assets/ are produced successfully.
+3. Render docs/UWRTSL-sodium-policy-20260806.Rmd.
+4. Fix any R/LaTeX/Beamer errors.
+5. Check that no calculations needed by the slides occur inside the slide deck.
+6. Check that every number in the deck comes from the report/pipeline artifacts.
+7. Check that all LSS and fiscal descriptions match the current implementation.
+8. Check for stale references to the old LSS/fiscal models.
+9. Review the rendered PDF for overfull slides, tiny tables, clipping, duplicated information and excessive text.
+
+Do not stop at editing the source: ensure both R Markdown documents render successfully if the required model artifacts are available.
+
+
+## DELIVERABLE
+
+Modify ONLY:
+
+- reports/report.RMD
+- docs/UWRTSL-sodium-policy-20260806.Rmd
+
+unless a bibliography entry is absolutely required for successful citation/rendering. If another file must be modified, explain why before doing so.
+
+At the end, give me:
+
+1. a concise summary of the changes;
+2. which slides were added/removed/refactored;
+3. which stale LSS/fiscal assumptions were corrected;
+4. any discrepancies you found between current code, report, deck, Huang, or Saxena;
+5. any remaining modeling assumptions/decisions that RTSL should explicitly confirm.
