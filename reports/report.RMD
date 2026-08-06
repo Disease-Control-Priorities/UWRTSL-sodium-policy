@@ -922,6 +922,195 @@ Na/K→SBP method** — they are distinct scenarios driven by a single pathway e
 the whole population**, so no `lss_s2` benchmark exists (guarded in code). The
 comparison of the two methods is in the Results section.
 
+### How this LSS model compares with Huang et al. (2026)
+
+Our mechanistic LSS model follows the **structure** of Huang et al. 2026
+\autocite{huang2026} — the sodium **and** potassium → SBP → disease pathway,
+75/25 NaCl/KCl, Filippini (2020) potassium dose-response, Reddin (2023) baseline
+potassium — but is deliberately **narrower in scope**. It is embedded in our
+*dynamic* 10-country CVD state-transition model (not a static 193-country
+comparative risk assessment), covers our four SBP-mediated CVD causes (not
+Huang's broad CVD + CKD basket), and is **benefit-only**: unlike Huang, we do not
+model the hyperkalaemia/CKD harm channel. Table 3a positions the two side by
+side. The differences are choices of scope and integration, **not** corrections
+to Huang.
+
+```{r huang-comparison, message=FALSE, warning=FALSE, echo=FALSE}
+lc <- RC$lss
+huang_cmp <- data.frame(
+  Component = c(
+    "Modelling approach", "Geographic scope", "LSS formulation",
+    "Sodium → SBP", "Potassium → SBP", "Baseline potassium",
+    "Population scenarios", "Hypertension targeting", "CVD outcomes",
+    "CKD / hyperkalaemia harms", "Uncertainty", "Role of SSaSS trial"),
+  `Huang et al. 2026` = c(
+    "Static comparative risk assessment (SBP-distribution shift); one time point",
+    "193 countries/territories",
+    "75% NaCl / 25% KCl (15/85 in sensitivity)",
+    "Mozaffarian 2014 meta-regression, by age and hypertension status; WHO 2 g/day floor",
+    "Filippini 2020 non-linear; stronger at higher baseline sodium; additive (80% in a sensitivity)",
+    "Reddin 2023 (global mean ≈ 2.3 g/day)",
+    "5: all salt / discretionary / non-discretionary / diagnosed HTN / treated HTN",
+    "NCD-RisC 2019; 80% uptake (20% excluded for hyperkalaemia risk)",
+    "Broad CVD basket (IHD; ischaemic, intracerebral & subarachnoid stroke; HHD; AF; PAD …) + CKD",
+    "Modelled as a NET effect for population-wide scenarios (benefit − hyperkalaemia harm)",
+    "Probabilistic (1000 Monte Carlo) + 11 deterministic sensitivity analyses",
+    "Composition & adherence only (NOT the SBP effect size)"),
+  `Current UW/RTSL model` = c(
+    "Dynamic Well→Sick→Dead state-transition; annual projection to 2050",
+    paste0(n_countries, " RTSL priority countries"),
+    paste0(fmt_pct(lc$nacl_fraction, 0), " NaCl / ", fmt_pct(lc$kcl_fraction, 0), " KCl"),
+    "Filippini Na→SBP (2.8 mmHg/g raised-BP; 1.0 mmHg/g normal-BP); WHO 2 g/day floor",
+    paste0("Filippini 2020 achieved-excretion U-curve; baseline-Na modulation; non-HTN ×",
+           formatC(lc$nonhtn_factor, format = "f", digits = 2), "; additive"),
+    "Reddin 2023 (country × sex; region-mean fallback: Viet Nam, Ethiopia)",
+    "3: whole-population discretionary (s2), diagnosed HTN (s4), treated HTN (s5) — Huang's 2/4/5",
+    paste0("NCD-RisC ", RC$htn_source_year,
+           " diagnosed/treated population shares; uptake ",
+           formatC(lc$uptake, format = "f", digits = 2), " × adherence ",
+           formatC(lc$adherence, format = "f", digits = 2)),
+    "4 causes: IHD, ischaemic stroke, intracerebral haemorrhage, HHD (all via SBP)",
+    paste0(lc$harms_modelled, " — benefit-only"),
+    "Point estimates; SSaSS trial-RR as a sensitivity benchmark; input CIs shown, not propagated",
+    "Optional direct stroke-RR benchmark (HTN scenarios only); separate pathway, never combined"),
+  check.names = FALSE, stringsAsFactors = FALSE)
+
+kable(huang_cmp,
+      caption = paste0("Table 3a. LSS mechanistic model vs Huang et al. (2026). ",
+                       "Both share the Na+K→SBP structure, 75/25 formulation, ",
+                       "Filippini 2020 K dose-response and Reddin 2023 baseline K; ",
+                       "the differences are scope/integration, not corrections."),
+      align = c("l", "l", "l")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 12) |>
+  row_spec(0, bold = TRUE) |>
+  column_spec(1, bold = TRUE)
+```
+
+## LSS: Huang et al. (2026) vs. our current implementation
+
+\scriptsize
+
+\begin{columns}[T]
+
+\begin{column}{0.49\textwidth}
+\textbf{Huang et al.: static comparative risk assessment}
+
+\[
+Na^1 = Na^0 - 0.25\,Na^{R},
+\qquad
+K^1 = K^0 + \Delta K
+\]
+
+\[
+\Delta SBP
+=
+\Delta SBP_{Na}
++
+\Delta SBP_{K}
+\]
+
+Post-LSS SBP distribution is shifted:
+
+\[
+X^1 \sim N(\mu+\Delta SBP,\sigma^2)
+\]
+
+Disease impact is calculated using the full RR function:
+
+\[
+PIF
+=
+1-
+\frac{E_{P^1}[RR(X)]}
+     {E_{P^0}[RR(X)]}
+\]
+
+\[
+D^{averted}=PIF\times D^0
+\]
+
+\textbf{Net effect also subtracts hyperkalaemia harm:}
+
+\[
+D^{net}
+=
+D^{averted}_{SBP}
+-
+D^{hyperK}_{CKD}
+\]
+
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\textbf{UW--RTSL: dynamic state-transition implementation}
+
+LSS displaces discretionary sodium:
+
+\[
+\Delta Na
+=
+Na^0\,q_D(0.25)(0.92)(u)(c_t)
+\]
+
+and adds potassium stoichiometrically:
+
+\[
+\Delta K
+=
+\Delta Na
+\frac{0.524}{0.393}
+\approx1.33\,\Delta Na
+\]
+
+SBP reduction is:
+
+\[
+\Delta SBP_{Na}
+=
+[2.8H+1.0(1-H)]\Delta Na
+\]
+
+\[
+\Delta SBP
+=
+\Delta SBP_{Na}
++
+m_{Na}\,m_H\,\Delta SBP_K
+\]
+
+where $\Delta SBP_K$ comes from the Filippini K-excretion curve.
+
+Rather than a PIF, $\Delta SBP$ modifies annual incidence:
+
+\[
+IR'_{b,c}
+=
+IR_{b,c}
+\left[
+1-(1-RR^{10}_{b,c})
+\frac{\Delta SBP}{10}
+\right]
+\]
+
+and the new incidence enters the annual population/state-transition model:
+
+\[
+Pop_t \rightarrow Cases_t \rightarrow Deaths_t
+\]
+
+\textbf{CF unchanged:}\quad $CF'=CF$.
+
+\end{column}
+\end{columns}
+
+\medskip
+
+\begin{alertblock}{Key interpretation}
+\scriptsize
+The biological pathway is intentionally similar --- \textbf{LSS $\to$ lower Na + higher K $\to$ lower SBP $\to$ lower CVD risk} --- but the mathematical health-impact engine differs. Huang applies a \textbf{distributional PIF to current disease burden} and explicitly models CKD/hyperkalaemia harms; our model applies the Na/K-induced SBP change to \textbf{cause-specific incidence inside a dynamic 2026--2050 state-transition model}. The current implementation is therefore \textbf{benefit-only for LSS} and does not reproduce Huang's PIF or hyperkalaemia module.
+\end{alertblock}
+
 ## Fiscal policy (exploratory)
 
 Fiscal policy is modelled as an **explicit, still-simple pathway** and is labelled
@@ -970,6 +1159,96 @@ The full package uses the **base** fiscal effect if
 `include_fiscal_in_package = `r RC$fiscal$include_in_package``; the low/base/high
 variants also run as their own **individual** scenarios (`fiscal_low`,
 `fiscal_base`, `fiscal_high`) so the sensitivity is visible in the results.
+
+### How this fiscal model compares with Saxena et al. (2025)
+
+Saxena et al. 2025 \autocite{saxena2025} — the Philippines tax modelling study
+that anchors our base case — is a full behavioural-economic evaluation. Our
+implementation intentionally **collapses** its structure into a transparent,
+transferable multi-country approximation for the Bloomberg exercise: one own-price
+elasticity, one pass-through, one taxable-packaged share, and flat
+substitution/reformulation offsets, feeding the same sodium → SBP → CVD engine as
+every other policy. Table M5b positions the two side by side. Saxena provides the
+conceptual and empirical **anchor** (its base case is a 20% tax with ~100%
+pass-through giving ~10% lower taxed-food purchases — the calibration point for
+our base variant); it does **not** provide a generic elasticity that can simply be
+transported to all countries.
+
+```{r saxena-comparison, message=FALSE, warning=FALSE, echo=FALSE}
+fb   <- RC$fiscal$base
+fsen <- RC$fiscal$sensitivity
+faB  <- as.data.table(fiscal_audit)[variant %in% c("fiscal_base", "fiscal")][1]
+rng  <- function(x) paste0(x[1], " / ", x[2], " / ", x[3])
+saxena_cmp <- data.frame(
+  Component = c(
+    "Setting & model", "Time horizon", "Tax rate", "What is taxed",
+    "Pass-through", "Demand response", "Wealth / equity",
+    "Substitution & reformulation", "Packaged-food trend", "Health pathway",
+    "Diseases modelled", "Sodium reduction", "Economic evaluation", "Uncertainty"),
+  `Saxena et al. 2025 (Philippines)` = c(
+    "Philippines; proportional multistate life-table (Markov) cohort",
+    "20 years (results at 5/10/20 y)",
+    "20% excise (40% in sensitivity)",
+    "WHO WPRO nutrient-profile thresholds; 17 packaged categories; sodium + sugar",
+    "100% base (50% / 150% in sensitivity)",
+    "QUAIDS demand system; own- AND cross-price elasticities",
+    "Wealth-quintile-specific elasticities; equity outcomes reported",
+    "Within-category taxed↔untaxed substitution; endogenous threshold-distance reformulation",
+    "Euromonitor 2008–19, dynamic; total intake held via offset assumption",
+    "Sodium→SBP→CVD AND sugar→BMI→type-2 diabetes",
+    "Type-2 diabetes, IHD, ischaemic stroke (incidence only)",
+    "≈ 100 mg/day (≈ 10% relative) at year 20",
+    "Full: HALYs, health-care savings, tax revenue (~US$13 B), ICER, equity",
+    "Probabilistic (1000 Monte Carlo) + 5 deterministic scenarios"),
+  `Current UW/RTSL fiscal model` = c(
+    "Multi-country; embedded in the shared Well→Sick→Dead state-transition engine",
+    paste0("Annual to 2050 (scale-up ", SCALEUP_YEAR1, "–", SCALEUP_YEAR2, ")"),
+    paste0("base ", fmt_pct(fb$tax_rate, 0), " (low/base/high ",
+           rng(sapply(list(fsen$fiscal_low, fsen$fiscal_base, fsen$fiscal_high),
+                      function(z) fmt_pct(z$tax_rate, 0))), ")"),
+    paste0("Flat taxable-packaged share (base ", fmt_pct(fb$taxable_share, 0),
+           "); NO item-level nutrient profiling"),
+    paste0("base ", fmt_pct(fb$pass_through, 0), " (low/base/high ",
+           rng(sapply(list(fsen$fiscal_low, fsen$fiscal_base, fsen$fiscal_high),
+                      function(z) fmt_pct(z$pass_through, 0))), ")"),
+    paste0("Single own-price elasticity (low/base/high ",
+           rng(sapply(list(fsen$fiscal_low, fsen$fiscal_base, fsen$fiscal_high),
+                      function(z) formatC(z$elasticity, format = "f", digits = 2))),
+           "); NO cross-price terms"),
+    "None — a single national response (no wealth stratification)",
+    paste0("Flat offsets only (base substitution ", fmt_pct(fb$substitution, 0),
+           ", reformulation ", fmt_pct(fb$reformulation, 0),
+           "; varied in low/high)"),
+    "Euromonitor packaged trend; composition-only, total intake held",
+    "Sodium→SBP→CVD only (no sugar / BMI / diabetes pathway)",
+    "IHD, ischaemic stroke, intracerebral haemorrhage, HHD (incidence only)",
+    paste0("base ≈ ", fmt_pct(faB$taxed_packaged_reduction, 0),
+           " of taxed packaged → ", fmt_pct(faB$packaged_reduction, 1),
+           " of packaged sodium"),
+    "Health impact only — no costing, tax revenue or ICER (yet)",
+    "Deterministic low / base / high variants only"),
+  check.names = FALSE, stringsAsFactors = FALSE)
+
+kable(saxena_cmp,
+      caption = paste0("Table M5b. Fiscal model vs Saxena et al. (2025). ",
+                       "Saxena is the conceptual/empirical anchor; ours is a ",
+                       "deliberately simpler, transferable approximation. Values in ",
+                       "the right column are read from run_config.rds / fiscal_audit.rds."),
+      align = c("l", "l", "l")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 12) |>
+  row_spec(0, bold = TRUE) |>
+  column_spec(1, bold = TRUE)
+```
+
+**Elements of Saxena et al. that our model does *not* reproduce:** the full
+QUAIDS demand system; category-specific own- and cross-price elasticities;
+wealth-quintile heterogeneity and equity outcomes; item/category-specific tax
+eligibility (we use one flat taxable-packaged share); endogenous, product-level
+reformulation; the sugar→BMI→diabetes pathway; and the full economic evaluation
+(tax revenue, implementation cost, ICER). These are deliberate simplifications
+for a transparent multi-country exercise, not oversights — and each is a candidate
+for future refinement if RTSL prioritises fiscal policy.
 
 ## Composition math
 
@@ -2327,6 +2606,40 @@ p_flow <- ggplot() +
   theme_void(base_size = 12)
 save_fig(p_flow, "fig_flow.png", 11, 2.8)
 
+# ---- FIG: LSS Na/K causal pathway (deck Slide A) ----------------------------
+mk_flow <- function(labels, fill = "#e8f2ea", border = "#59A14F") {
+  n <- length(labels)
+  bx <- data.table(x = seq_len(n), label = labels)
+  ar <- data.table(x = (seq_len(n - 1)) + 0.44, xend = (2:n) - 0.44, y = 1, yend = 1)
+  ggplot() +
+    geom_tile(data = bx, aes(x = x, y = 1), width = 0.86, height = 0.7,
+              fill = fill, color = border, linewidth = 0.7) +
+    geom_text(data = bx, aes(x = x, y = 1, label = label), size = 3.2, lineheight = 0.95) +
+    geom_segment(data = ar, aes(x = x, xend = xend, y = y, yend = yend),
+                 arrow = arrow(length = unit(0.16, "cm"), type = "closed"),
+                 linewidth = 0.5, color = "grey30") +
+    coord_cartesian(xlim = c(0.5, n + 0.5), ylim = c(0.55, 1.45)) +
+    theme_void(base_size = 12)
+}
+p_lss_flow <- mk_flow(c(
+  "LSS adoption\n75% NaCl / 25% KCl",
+  "↓ discretionary Na\n+ ↑ K (stoichiometric)",
+  "↓ SBP\nΔSBP(Na) + ΔSBP(K)",
+  "↓ CVD incidence\nall 4 causes (via SBP)",
+  "Deaths\ndelayed"))
+save_fig(p_lss_flow, "fig_lss_pathway.png", 11, 2.2)
+
+# ---- FIG: fiscal tax->price->demand->sodium pathway (deck fiscal slide) ------
+p_fiscal_flow <- mk_flow(c(
+  "Tax rate",
+  "Price ↑\n(× pass-through)",
+  "Quantity ↓\n(× elasticity)",
+  "↓ taxed packaged\n(× taxable share)",
+  "↓ packaged\nsodium",
+  "↓ total Na →\nSBP → CVD"),
+  fill = "#efe8f4", border = "#6a3d9a")
+save_fig(p_fiscal_flow, "fig_fiscal_pathway.png", 11.5, 2.2)
+
 # ---- FIG: baseline age-standardised mortality rate --------------------------
 p_asmr <- ggplot() +
   geom_line(data = asmr_cause, aes(year, ASMR, color = cause_lbl,
@@ -2521,6 +2834,12 @@ eff_of  <- function(iv, src) { v <- intervention_effects[intervention == iv & so
 .he <- as.data.table(htn_eligibility)[location %in% RC$priority_countries]
 fa <- as.data.table(fiscal_audit)
 fa_base <- fa[variant %in% c("fiscal_base", "fiscal")][1]
+fa_low  <- fa[variant == "fiscal_low"][1]
+fa_high <- fa[variant == "fiscal_high"][1]
+
+# Representative LSS Na/K→SBP quantities (mean over whole-population s2 rows) for
+# the deck's LSS methods slide — read from the audit, not recomputed.
+la_dk <- as.data.table(lss_audit)[grepl("^lss_s2", scenario) & method == "na_k_sbp"]
 
 nums <- list(
   n_countries    = n_countries,
@@ -2568,6 +2887,37 @@ nums <- list(
   fiscal_tax_rate      = fmt_pct(RC$fiscal$base$tax_rate, 0),
   fiscal_taxable_share = fmt_pct(RC$fiscal$base$taxable_share, 0),
   fiscal_in_package    = as.character(RC$fiscal$include_in_package),
+  # fiscal pathway detail (EXPLORATORY) — base row + low/high, from fiscal_audit
+  fiscal_pass_through  = fmt_pct(fa_base$pass_through, 0),
+  fiscal_elasticity    = formatC(fa_base$elasticity, format = "f", digits = 2),
+  fiscal_price_change  = fmt_pct(fa_base$price_change, 0),
+  fiscal_qty_response  = fmt_pct(abs(fa_base$quantity_response), 0),
+  fiscal_taxed_pkg_red = fmt_pct(fa_base$taxed_packaged_reduction, 0),
+  fiscal_pkg_red       = fmt_pct(fa_base$packaged_reduction, 1),
+  fiscal_substitution  = fmt_pct(fa_base$substitution, 0),
+  fiscal_reformulation = fmt_pct(fa_base$reformulation, 0),
+  fiscal_low_pkg       = fmt_pct(fa_low$packaged_reduction, 1),
+  fiscal_high_pkg      = fmt_pct(fa_high$packaged_reduction, 1),
+  fiscal_low_m         = fmt_m(ddc("fiscal_low"), 2),
+  fiscal_high_m        = fmt_m(ddc("fiscal_high"), 2),
+  # LSS Na/K→SBP detail (representative means over whole-population s2 rows)
+  lss_uptake           = formatC(RC$lss$uptake, format = "f", digits = 2),
+  lss_nonhtn_factor    = formatC(RC$lss$nonhtn_factor, format = "f", digits = 2),
+  lss_eff_na_k_disc    = fmt_pct(RC$lss$eff_lss_na_k_discretionary, 0),
+  lss_k_mg_per_mmol    = as.character(RC$lss$k_mg_per_mmol),
+  lss_k_intake_excr    = as.character(RC$lss$k_intake_to_excretion),
+  lss_dsbp_na          = formatC(mean(la_dk$sbp_delta_na_mmHg,       na.rm = TRUE), format = "f", digits = 2),
+  lss_dsbp_k           = formatC(mean(la_dk$sbp_delta_k_mmHg,        na.rm = TRUE), format = "f", digits = 2),
+  lss_dsbp_tot         = formatC(mean(la_dk$sbp_delta_combined_mmHg, na.rm = TRUE), format = "f", digits = 2),
+  lss_na_disp          = formatC(mean(la_dk$sodium_displaced_g,      na.rm = TRUE), format = "f", digits = 2),
+  lss_k_add            = formatC(mean(la_dk$potassium_added_g,       na.rm = TRUE), format = "f", digits = 2),
+  # published media effect (retained in registry; excluded from reported scenarios)
+  eff_media            = fmt_pct(eff_of("media_campaign", "packaged"), 0),
+  # external comparators (documented in the report layer, not our pipeline output)
+  huang_s2_deaths      = "1.85 million/year",
+  saxena_na_red        = "≈100 mg/day (≈10%)",
+  saxena_tax           = "20%",
+  saxena_horizon       = "20 years",
   eff_lss          = fmt_pct(eff_of("lss", "discretionary"), 0),
   vn_sanity        = formatC(vn_sanity, format = "f", digits = 4),
   # PROVISIONAL: public-procurement share is still the stale school-inclusive 5%.
@@ -2614,6 +2964,10 @@ tex_fiscal_audit <- if (exists("fa_tbl")) mk_tex(as.data.frame(fa_tbl),
   align = c("l", rep("r",10))) else "\\emph{Fiscal audit unavailable.}"
 tex_nak_ssass <- if (exists("cmp_tbl")) mk_tex(as.data.frame(cmp_tbl),
   align = c("l","l","l", rep("r",5))) else "\\emph{Na/K-vs-SSaSS comparison unavailable.}"
+tex_fiscal_sensitivity <- if (exists("fr_tbl")) mk_tex(as.data.frame(fr_tbl),
+  align = c("l","r","r")) else "\\emph{Fiscal sensitivity results unavailable.}"
+tex_huang_ours  <- if (exists("huang_cmp"))  mk_tex(huang_cmp,  align = c("l","l","l")) else "\\emph{Huang comparison unavailable.}"
+tex_saxena_ours <- if (exists("saxena_cmp")) mk_tex(saxena_cmp, align = c("l","l","l")) else "\\emph{Saxena comparison unavailable.}"
 
 figs <- list(
   source_shares = "fig_source_shares.png",
@@ -2626,8 +2980,10 @@ figs <- list(
   results_bar   = "fig_results_bar.png",
   bycause       = "fig_bycause.png",
   countries     = "fig_countries.png",
-  benchmark     = "fig_benchmark.png",
-  packaged_time = "fig_packaged_time.png"   # NEW: packaged share over time by country
+  benchmark      = "fig_benchmark.png",
+  packaged_time  = "fig_packaged_time.png",  # NEW: packaged share over time by country
+  lss_pathway    = "fig_lss_pathway.png",    # NEW: LSS Na/K causal pathway
+  fiscal_pathway = "fig_fiscal_pathway.png"  # NEW: fiscal tax->price->demand->sodium pathway
 )
 
 tex <- list(
@@ -2640,7 +2996,10 @@ tex <- list(
   ncd_eligibility = tex_ncd_eligibility,   # NEW (Task 4i)
   lss_audit       = tex_lss_audit,         # NEW
   fiscal_audit    = tex_fiscal_audit,      # NEW
-  nak_vs_ssass    = tex_nak_ssass          # NEW
+  nak_vs_ssass    = tex_nak_ssass,         # NEW
+  fiscal_sensitivity = tex_fiscal_sensitivity,  # NEW: deaths delayed low/base/high
+  huang_ours      = tex_huang_ours,        # NEW: LSS vs Huang et al. 2026
+  saxena_ours     = tex_saxena_ours        # NEW: fiscal vs Saxena et al. 2025
 )
 
 deck <- list(nums = nums, figs = figs, tex = tex)
