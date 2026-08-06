@@ -1277,19 +1277,30 @@ calculate_baseline_incidence_gbd <- function(bp_prob, intervention_rates,
     bp_prob[, (col_name) := get_gbd_relative_risks(bp_cat, age, cause, dt_gbd_rr)]
   }
   
+  # hstroke has no ETIHAD SBP-effect RR of its own, so the effect pathway
+  # borrows istroke's (the intentional ETIHAD carry above). For a coherent CRA
+  # the baseline decomposition must use the SAME RR as the effect, so hstroke
+  # ALSO uses istroke's GBD RR here -- in both alpha and the bin split below.
+  # (Using hstroke's own steeper GBD RR for the decomposition while the effect
+  # stays on istroke's flatter RR concentrates baseline incidence in high-BP
+  # bins and inflated the modelled hstroke cut so it dominated every sodium->SBP
+  # scenario. Treating hstroke exactly like istroke removes that mismatch; the
+  # CRA identity sum_b(prob * IR_bin) = IR still holds, asserted below.)
   alphas <- bp_prob[, .(
-    ihd    = sum(prob * RRi_IHD),
+    ihd     = sum(prob * RRi_IHD),
     istroke = sum(prob * RRi_ISTROKE),
-    hstroke = sum(prob * RRi_HSTROKE),
-    hhd    = sum(prob * RRi_HHD),
-    aod    = sum(prob * RRi_AOD)
+    hstroke = sum(prob * RRi_ISTROKE),
+    hhd     = sum(prob * RRi_HHD),
+    aod     = sum(prob * RRi_AOD)
   ), by = .(age, sex, location, Year)]
   
   alphas <- melt(alphas, id.vars = c("age", "sex", "location", "Year"),
                  variable.name = "cause", value.name = "alpha")
   
   rris <- bp_prob[, .(age, sex, Year, location, bp_cat, prob,
-                      RRi_IHD, RRi_HHD, RRi_ISTROKE, RRi_AOD)]
+                      RRi_IHD, RRi_HHD, RRi_ISTROKE, RRi_HSTROKE, RRi_AOD)]
+  # hstroke borrows istroke's RR for the bin split too (see the alpha note
+  # above) so the decomposition RR matches the borrowed istroke effect RR.
   rris[, RRi_HSTROKE := RRi_ISTROKE]
   setnames(rris,
            c("RRi_IHD", "RRi_HHD", "RRi_ISTROKE", "RRi_HSTROKE", "RRi_AOD"),
@@ -1306,6 +1317,28 @@ calculate_baseline_incidence_gbd <- function(bp_prob, intervention_rates,
               by = c("age", "sex", "location", "cause", "year"))
   
   dt[, IR_bin := (RRi * IR) / alpha]
+
+  # Invariant: the BP-bin split must reconstruct the population-level incidence
+  # for every cause (sum_b prob_b * IR_bin = IR). This is exactly what the old
+  # hstroke RR mismatch violated (the ratio fell to ~0.79); it now holds for all
+  # causes. Fail loud if a future RR/alpha inconsistency breaks it again.
+  ir_check <- dt[, .(
+    IR_input         = first(IR),
+    IR_reconstructed = sum(prob * IR_bin)
+  ), by = .(location, year, age, sex, cause)]
+
+  tolerance <- 1e-10
+  bad <- ir_check[
+    !is.finite(IR_reconstructed) |
+      abs(IR_reconstructed - IR_input) > tolerance * pmax(1, abs(IR_input))
+  ]
+  if (nrow(bad) > 0L) {
+    stop(sprintf(
+      "BP-bin incidence decomposition failed for %d location-year-age-sex-cause cells.",
+      nrow(bad)
+    ))
+  }
+
   return(dt)
 }
 
@@ -1525,9 +1558,10 @@ calculate_sodium_impact_etihad <- function(
   # channel exists in this disease model (unlike Huang et al.). K added is
   # stoichiometric to the sodium displaced (salt_reduction already carries reach x
   # coverage x ramp x WHO-floor), so the two channels stay consistent.
-  # NB: like every sodium->SBP scenario, na_k_sbp inherits the pre-existing
-  # hstroke IR-decomposition quirk (raw-IR normalisation); left as long-term
-  # disease-model scope and flagged in the report limitations.
+  # NB: the BP-bin incidence decomposition is now consistent for every cause
+  # (calculate_baseline_incidence_gbd asserts sum_b prob * IR_bin = IR), so the
+  # former hstroke IR-decomposition quirk that inflated all sodium->SBP
+  # scenarios no longer applies here.
   apply_na_k <- !is.null(lss_method) && lss_method == "na_k_sbp" &&
                 !is.null(lss_reach)  && lss_reach != "none"
   if (apply_na_k) {
@@ -1605,17 +1639,13 @@ calculate_sodium_impact_etihad <- function(
         "(single pathway for stroke).\n")
 
     # Incidence: apply the trial RR at the bin level, then express the effect
-    # RELATIVE TO THE BIN-AGGREGATED BASELINE (not raw IR), DISCARDING the
-    # SBP-mediated cut. Normalising by sum(IR_bin*prob) cancels a PRE-EXISTING
-    # hstroke decomposition quirk: calculate_baseline_incidence_gbd() sets
-    # RRi_HSTROKE := RRi_ISTROKE for the bin split but uses the (steeper) GBD
-    # hstroke RR for alpha, so sum(IR_bin*prob) != IR for hstroke and a raw-IR
-    # normalisation would inflate the hstroke effect. With this normalisation the
-    # trial effect is a clean 1 - reached*(1-RR): for reach="all", eff_ir
-    # collapses to the trial multiplier for BOTH stroke causes (istroke was
-    # already consistent; hstroke is now too). NB the sodium->SBP path still uses
-    # raw-IR normalisation and so still carries that quirk -- flagged for the
-    # long-term disease-model fix, out of scope for this MVP.
+    # RELATIVE TO THE BIN-AGGREGATED BASELINE, DISCARDING the SBP-mediated cut.
+    # sum(IR_bin*prob) now equals IR for every cause -- calculate_baseline_
+    # incidence_gbd() uses each cause's own GBD RR in both the bin split and
+    # alpha and asserts that identity -- so this is equivalent to normalising by
+    # raw IR. Kept as a self-normalising guard: the trial effect stays a clean
+    # 1 - reached*(1-RR), and for reach="all" eff_ir collapses to the trial
+    # multiplier for BOTH stroke causes.
     dt_baseline[, IR_base_agg := sum(IR_bin * prob),
                 by = .(age, sex, location, cause, year)]
     dt_baseline[, IR_agg_new  := sum(IR_bin * eff_ir_trial * prob),

@@ -2477,12 +2477,7 @@ not as a validation target.
   interchangeable: SSaSS RRs apply only to SSaSS-comparable (diagnosed/treated
   HTN) populations and stroke outcomes, whereas Na/K–SBP covers all four causes
   via SBP. They are reported side by side, never combined, and no single pathway
-  drives a cause twice.
-- **hstroke incidence quirk (pre-existing).** All sodium→SBP scenarios (including
-  Na/K–SBP LSS) inherit a known disease-model decomposition quirk that inflates
-  hemorrhagic-stroke *incidence* effects; the SSaSS benchmark path was corrected
-  for it, but fixing the root cause is out of scope here.
-- **Euromonitor trend: category definitions, extrapolation, composition-only.**
+  drives a cause twice.- **Euromonitor trend: category definitions, extrapolation, composition-only.**
   The packaged trend uses Matti's pre-combined v002 category set; the post-2030
   rule (`r RC$euromonitor$post2030`) and the ceiling
   (`r fmt_pct(RC$euromonitor$ceiling,0)`) are **extrapolation assumptions**, and

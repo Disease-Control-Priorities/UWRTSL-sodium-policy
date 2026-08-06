@@ -724,19 +724,16 @@ tbl("results")
 \scriptsize
 The **LSS (Na/K)** scenarios are the largest single levers --- whole-population **s2** `r N$lss_s2_m` M, diagnosed-HTN **s4** `r N$lss_s4_m` M, treated-HTN **s5** `r N$lss_s5_m` M --- because they cut discretionary salt (dominant in the most populous countries) through **both** sodium and potassium. Among the source-split policies, **salt targets** delays the most (`r N$salt_targets_m` M), then **FOPL** (`r N$fopl_m` M), **public procurement** (`r N$public_m` M, provisional) and **fiscal (base)** (`r N$fiscal_m` M, exploratory). The **SSaSS trial-RR benchmark** (stroke-only) gives s4 `r N$lss_s4_ssass_m` M / s5 `r N$lss_s5_ssass_m` M --- lower, as expected for a stroke-only pathway. Media is excluded.
 
-\medskip
-\alert{\scriptsize Caveat: absolute magnitudes are dominated by a hemorrhagic-stroke incidence quirk affecting all sodium$\to$SBP scenarios (see Limitations); read cross-scenario differences with care.}
+## Full package: deaths delayed by cause
 
-<!-- ## Full package: deaths delayed by cause -->
+\justifying
+\footnotesize
 
-<!-- \justifying -->
-<!-- \footnotesize -->
+```{r fig-bycause, out.width="82%"}
+knitr::include_graphics(fig("bycause"))
+```
 
-<!-- ```{r fig-bycause, out.width="82%"} -->
-<!-- knitr::include_graphics(fig("bycause")) -->
-<!-- ``` -->
-
-<!-- \scriptsize Ischemic heart disease and stroke dominate the delayed deaths, tracking their share of the baseline CVD burden and their SBP-mediated relative risks. -->
+\scriptsize Ischemic heart disease and stroke dominate the delayed deaths, tracking their share of the baseline CVD burden and their SBP-mediated relative risks.
 
 ## Full package: deaths delayed by country
 
