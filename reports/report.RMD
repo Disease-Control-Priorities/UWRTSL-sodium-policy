@@ -300,13 +300,18 @@ scenario_labels[is.na(scenario_labels) | scenario_labels == ""] <-
 # Compact labels for axes / legends.
 short_lab <- function(s) {
   m <- c(baseline = "Baseline", public_procurement = "Public procurement",
-         fopl = "FOPL", salt_targets = "Salt targets", full_package = "Full package",
+         fopl = "FOPL", salt_targets = "Salt targets",
+         full_package = "Full package", full_package_low = "Full pkg (low fiscal)",
+         full_package_high = "Full pkg (high fiscal)",
          fiscal = "Fiscal", fiscal_low = "Fiscal (low)", fiscal_base = "Fiscal (base)",
          fiscal_high = "Fiscal (high)",
-         lss_s2 = "LSS s2 all (Na/K)", lss_s4 = "LSS s4 dx (Na/K)",
-         lss_s5 = "LSS s5 tx (Na/K)", lss_s4_ssass = "LSS s4 SSaSS",
-         lss_s5_ssass = "LSS s5 SSaSS")
-  ifelse(s %in% names(m), m[s], s)
+         lss_s4 = "LSS s4 dx (Na/K)", lss_s5 = "LSS s5 tx (Na/K)",
+         lss_s4_ssass = "LSS s4 SSaSS", lss_s5_ssass = "LSS s5 SSaSS")
+  out <- ifelse(s %in% names(m), m[s], s)
+  # LSS scenario-2 whole-population coverage variants lss_s2_<pct> -> "LSS s2 XX%".
+  i <- grepl("^lss_s2_[0-9]+$", s)
+  out[i] <- paste0("LSS s2 ", sub("^lss_s2_", "", s[i]), "%")
+  out
 }
 scenario_labels_short <- setNames(short_lab(scenario_levels), scenario_levels)
 
@@ -314,8 +319,12 @@ scenario_labels_short <- setNames(short_lab(scenario_levels), scenario_levels)
 .base_cols <- c(baseline = "#999999", public_procurement = "#1f78b4", fopl = "#ff7f00",
                 salt_targets = "#e31a1c", fiscal = "#6a3d9a", fiscal_low = "#9e9ac8",
                 fiscal_base = "#6a3d9a", fiscal_high = "#3f007d",
-                lss_s2 = "#8c510a", lss_s4 = "#bf812d", lss_s5 = "#dfc27d",
-                lss_s4_ssass = "#01665e", lss_s5_ssass = "#5ab4ac", full_package = "#000000")
+                lss_s2_10 = "#f6e8c3", lss_s2_20 = "#dfc27d", lss_s2_30 = "#bf812d",
+                lss_s2_40 = "#8c510a", lss_s2_50 = "#543005",
+                lss_s4 = "#35978f", lss_s5 = "#80cdc1",
+                lss_s4_ssass = "#01665e", lss_s5_ssass = "#5ab4ac",
+                full_package = "#000000", full_package_low = "#666666",
+                full_package_high = "#222222")
 scenario_cols <- .base_cols[scenario_levels]
 if (any(is.na(scenario_cols))) {
   miss <- scenario_levels[is.na(scenario_cols)]
@@ -884,7 +893,12 @@ eligible-population coverage and are in the same audit file.
 
 ```{r lss-audit-table, message=FALSE, warning=FALSE, echo=FALSE}
 la <- as.data.table(lss_audit)
-la_s2 <- la[grepl("^lss_s2", scenario) & method == "na_k_sbp"][order(location, sex)]
+# Scenario 2 is now a coverage sweep (lss_s2_10 ... lss_s2_50); show the pathway at
+# the highest coverage as representative (composition scales linearly with coverage).
+.s2_names <- grep("^lss_s2_[0-9]+$", unique(la$scenario), value = TRUE)
+.s2_rep   <- if (length(.s2_names)) .s2_names[which.max(as.integer(sub("^lss_s2_", "", .s2_names)))] else "lss_s2"
+la_s2 <- la[scenario == .s2_rep & method == "na_k_sbp"][order(location, sex)]
+.s2_rep_cov <- if (nrow(la_s2)) paste0(round(100 * la_s2$eligible_pop_share[1]), "%") else "50%"
 if (nrow(la_s2)) {
   la_tbl <- la_s2[, .(
     Country = location, Sex = sex,
@@ -897,8 +911,9 @@ if (nrow(la_s2)) {
     `ΔSBP Na` = formatC(sbp_delta_na_mmHg, format="f", digits=2),
     `ΔSBP K`  = formatC(sbp_delta_k_mmHg, format="f", digits=2),
     `ΔSBP tot` = formatC(sbp_delta_combined_mmHg, format="f", digits=2))]
-  kable(la_tbl, caption = paste0("Table M3d. LSS Na/K→SBP pathway (scenario 2, whole-population) ",
-        "by country × sex. Harms modelled: none (no CKD channel). Causes affected: all four CVD."),
+  kable(la_tbl, caption = paste0("Table M3d. LSS Na/K→SBP pathway (scenario 2, whole-population, ",
+        .s2_rep_cov, " coverage) by country × sex. Harms modelled: none (no CKD channel). ",
+        "Causes affected: all four CVD. Composition scales linearly with coverage."),
         align = c("l","l", rep("r",8))) |>
     kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 11) |>
     row_spec(0, bold = TRUE)
@@ -1891,14 +1906,16 @@ Over `r impact_window`, across `r n_countries` countries:
   fiscal section; low/high variants bracket this).
 - **Public procurement** delays `r mm("public_procurement")` million
   (provisional; public share under revision). Media is excluded.
-- **LSS — primary Na/K→SBP** runs as three scenarios: whole-population
-  **s2** `r mm("lss_s2")` million, diagnosed-HTN **s4** `r mm("lss_s4")` million,
-  treated-HTN **s5** `r mm("lss_s5")` million. These combine the sodium- and
-  potassium-mediated SBP effects across all four CVD causes. The **SSaSS
-  trial-RR benchmark** (stroke-only), where run, gives s4
-  `r mm("lss_s4_ssass")` and s5 `r mm("lss_s5_ssass")` million — compared head-to-head
-  in the Na/K-vs-SSaSS table below. Coverage is from NCD-RisC population
-  eligibility (no BP≥140 proxy).
+- **LSS — primary Na/K→SBP** runs as a whole-population **Scenario 2**
+  coverage sweep plus two hypertension-targeted scenarios. Whole-population
+  **s2** ranges from `r mm("lss_s2_10")` million at 10% population coverage to
+  `r mm("lss_s2_50")` million at 50% coverage; diagnosed-HTN **s4**
+  `r mm("lss_s4")` million and treated-HTN **s5** `r mm("lss_s5")` million use
+  NCD-RisC eligibility. These combine the sodium- and potassium-mediated SBP
+  effects across all four CVD causes. The **SSaSS trial-RR benchmark**
+  (stroke-only), where run, gives s4 `r mm("lss_s4_ssass")` and s5
+  `r mm("lss_s5_ssass")` million — compared head-to-head in the Na/K-vs-SSaSS
+  table below. Coverage is from NCD-RisC population eligibility (no BP≥140 proxy).
 
 ## Table 1 — Cumulative deaths delayed by scenario
 
@@ -2174,11 +2191,17 @@ interchangeable estimates of the same thing:
 dd_lss <- deaths_delayed_by(data.out, by = character(0), years = impact_y1:impact_y2)
 dd_lss <- dd_lss[grepl("^lss", as.character(scenario)),
                  .(scenario = as.character(scenario), deaths_delayed)]
+# The Scenario-2 uptake sweep (lss_s2_10..50) is shown in full elsewhere; here we
+# compare methods, so keep only the representative (highest-coverage) s2 plus the
+# HTN-targeted s4/s5 under both methods.
+.s2_cmp <- grep("^lss_s2_[0-9]+$", dd_lss$scenario, value = TRUE)
+.s2_cmp_rep <- if (length(.s2_cmp)) .s2_cmp[which.max(as.integer(sub("^lss_s2_", "", .s2_cmp)))] else NULL
+dd_lss <- dd_lss[!grepl("^lss_s2_[0-9]+$", scenario) | scenario == .s2_cmp_rep]
 la <- as.data.table(lss_audit)
 la_sc <- la[, .(elig = eligibility_group[1], cov = mean(eligible_pop_share),
                 na_disp = mean(sodium_displaced_g), k_add = mean(potassium_added_g),
                 dsbp = mean(sbp_delta_combined_mmHg)), by = .(scenario, method)]
-cmp <- merge(la_sc, dd_lss, by = "scenario", all.x = TRUE)
+cmp <- merge(la_sc, dd_lss, by = "scenario")   # inner: only the scenarios kept above
 cmp[, `:=`(Scenario = scenario_labels[scenario])]
 setorder(cmp, method, scenario)
 cmp_tbl <- cmp[, .(
@@ -2832,9 +2855,12 @@ fa_base <- fa[variant %in% c("fiscal_base", "fiscal")][1]
 fa_low  <- fa[variant == "fiscal_low"][1]
 fa_high <- fa[variant == "fiscal_high"][1]
 
-# Representative LSS Na/K→SBP quantities (mean over whole-population s2 rows) for
-# the deck's LSS methods slide — read from the audit, not recomputed.
-la_dk <- as.data.table(lss_audit)[grepl("^lss_s2", scenario) & method == "na_k_sbp"]
+# Representative LSS Na/K→SBP quantities (whole-population s2 at the highest
+# coverage) for the deck's LSS methods slide — read from the audit, not recomputed.
+.s2_dk_names <- grep("^lss_s2_[0-9]+$", unique(as.data.table(lss_audit)$scenario), value = TRUE)
+.s2_dk_rep   <- if (length(.s2_dk_names))
+  .s2_dk_names[which.max(as.integer(sub("^lss_s2_", "", .s2_dk_names)))] else "lss_s2"
+la_dk <- as.data.table(lss_audit)[scenario == .s2_dk_rep & method == "na_k_sbp"]
 
 nums <- list(
   n_countries    = n_countries,
@@ -2853,7 +2879,7 @@ nums <- list(
   public_m       = fmt_m(ddc("public_procurement"), 2),
   # LSS primary Na/K-SBP scenarios 2/4/5 + SSaSS benchmark (if present)
   lss_method     = RC$lss$method,
-  lss_s2_m       = fmt_m(ddc("lss_s2"), 2),
+  lss_s2_m       = fmt_m(ddc(.s2_dk_rep), 2),
   lss_s4_m       = fmt_m(ddc("lss_s4"), 2),
   lss_s5_m       = fmt_m(ddc("lss_s5"), 2),
   lss_s4_ssass_m = fmt_m(ddc("lss_s4_ssass"), 2),
@@ -3004,3 +3030,945 @@ message("Deck artifacts written to: ", deck_dir)
 message("  figures: ", paste(unlist(figs), collapse = ", "))
 message("  bundle : deck_data.rds")
 ```
+
+---
+
+# Technical report artifacts (Word + Excel export) {#tr-artifacts}
+
+This closing section is the **authoritative producer** of the Word technical report and the Excel workbook. It consumes the model outputs and objects computed above, builds every technical-report table and figure, and writes a single artifact bundle (`docs/report_assets/tr_bundle.rds`) plus `docs/technical-report.xlsx`. `docs/technical-report.RMD` only lays these out; it performs no calculation.
+
+```{r tr-setup-tables, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# ============================================================================
+# TECHNICAL-REPORT ARTIFACTS  (authoritative producer for docs/technical-report.*)
+# Builds every number, table and figure the Word technical report needs, writes a
+# single artifact bundle (docs/report_assets/tr_bundle.rds) AND the Excel workbook
+# (docs/technical-report.xlsx). docs/technical-report.RMD only LAYS OUT these.
+# ============================================================================
+
+# ---------------------------------------------------------------- tr-setup ----
+library(openxlsx)
+ra_dir <- file.path(wd, "docs", "report_assets")
+dir.create(ra_dir, recursive = TRUE, showWarnings = FALSE)
+
+tr_theme <- theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", size = 12),
+        plot.subtitle = element_text(size = 9.5, colour = "grey30"),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom")
+
+save_tr_fig <- function(plot, file, w, h, dpi = 300) {
+  fp <- file.path(ra_dir, file)
+  ggplot2::ggsave(fp, plot = plot, width = w, height = h, units = "in",
+                  dpi = dpi, bg = "white")
+  fp
+}
+
+# Deaths delayed by country x scenario over the impact window (authoritative key).
+dd_cs  <- deaths_delayed_by(data.out, by = "location", years = impact_y1:impact_y2)
+dd_cs[, scenario := as.character(scenario)]
+ddw    <- dcast(dd_cs, location ~ scenario, value.var = "deaths_delayed")
+base_cs <- unique(dd_cs[, .(location, baseline_dead)])
+
+# Country display order: by full-package (base) deaths delayed, descending.
+country_order <- ddw[order(-full_package), location]
+n_pri <- length(country_order)
+
+# Deaths delayed by country x scenario x cause (for supplemental by-cause table).
+dd_csc <- deaths_delayed_by(data.out, by = c("location", "cause"),
+                            years = impact_y1:impact_y2)
+dd_csc[, scenario := as.character(scenario)]
+
+# Build a display+raw deaths-delayed table (thousands, 1 dp) with a Total row.
+mk_dd_table <- function(scen_cols, col_labels, total_lab = "Total") {
+  present <- scen_cols %in% names(ddw)
+  scen_cols <- scen_cols[present]; col_labels <- col_labels[present]
+  m <- ddw[match(country_order, location), c("location", scen_cols), with = FALSE]
+  tot <- cbind(data.table(location = total_lab),
+               m[, lapply(.SD, sum, na.rm = TRUE), .SDcols = scen_cols])
+  m2 <- rbind(m, tot, use.names = TRUE)
+  raw <- copy(m2); setnames(raw, c("location", scen_cols), c("Country", col_labels))
+  disp <- copy(m2)
+  for (s in scen_cols)
+    disp[[s]] <- formatC(disp[[s]] / 1e3, format = "f", digits = 1, big.mark = ",")
+  setnames(disp, c("location", scen_cols), c("Country", col_labels))
+  list(display = as.data.frame(disp), raw = as.data.frame(raw),
+       scen = scen_cols, labels = col_labels)
+}
+
+fmtm <- function(x, d = 2) formatC(x / 1e6, format = "f", digits = d, big.mark = ",")
+fmtk <- function(x, d = 0) formatC(x / 1e3, format = "f", digits = d, big.mark = ",")
+pct  <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%")
+# Plain-language rendering of the post-2030 packaged-trend rule (no code tokens).
+.euro_post2030 <- switch(as.character(RC$euromonitor$post2030),
+  hold_constant = "held constant", continue_trend = "trend continues",
+  converge_to_ceiling = "converges to ceiling", as.character(RC$euromonitor$post2030))
+
+# Replace any implementation-style intervention token that may appear inside a
+# scenario label (e.g. the base full-package label lists "public_procurement +
+# fopl + salt_targets + fiscal") with plain language, longest keys first.
+.friendly_iv <- c(public_procurement = "public food procurement", fopl = "front-of-pack labelling",
+  salt_targets = "salt targets", fiscal_low = "salt tax (low)", fiscal_base = "salt tax (base)",
+  fiscal_high = "salt tax (high)", fiscal = "salt tax", media_campaign = "mass-media campaign",
+  lss = "low-sodium salt substitute")
+clean_label <- function(s) {
+  s <- as.character(s)
+  for (k in names(.friendly_iv)[order(-nchar(names(.friendly_iv)))])
+    s <- gsub(k, .friendly_iv[[k]], s, fixed = TRUE)
+  s
+}
+
+# --------------------------------------------------------------- tr-tables ----
+# Registries collect table/figure metadata; NUMBERS are assigned by Word-appearance
+# order (TABLE_ORDER / FIGURE_ORDER) so bundle == workbook == Word identifiers.
+TAB <- list(); FIG <- list()
+add_tab <- function(key, title, display, raw = NULL, units = "", period = "",
+                    population = "", scenario_def = "", rounding = "", source = "",
+                    notes = "", fontsize = 9, orientation = "portrait") {
+  TAB[[key]] <<- list(key = key, title = title, display = display,
+    raw = if (is.null(raw)) display else raw, units = units, period = period,
+    population = population, scenario_def = scenario_def, rounding = rounding,
+    source = source, notes = notes, fontsize = fontsize, orientation = orientation)
+}
+add_fig <- function(key, title, file, w, h, notes = "", data = NULL, source = "") {
+  FIG[[key]] <<- list(key = key, title = title, file = file, w = w, h = h,
+                      notes = notes, data = data, source = source)
+}
+
+WINDOW <- impact_window
+POP_ADULT <- "Adults aged 20–95"
+
+# T: Countries & populations -------------------------------------------------
+pop_2030 <- data.out[cause == "ihd" & year == 2030 & scenario == "baseline",
+                     .(pop = sum(pop, na.rm = TRUE)), by = location]
+base_na_tbl <- unique(data.out[, .(location)])  # placeholder join below
+sodium_ct <- tryCatch({
+  sp <- readRDS(paste0(wd_data, "sodium_policy_scenarios.rds")); setDT(sp)
+  sp[year == 2024, .(location, sodium_current)]
+}, error = function(e) NULL)
+cp <- data.table(location = country_order)
+cp <- merge(cp, pop_2030, by = "location", all.x = TRUE)
+if (!is.null(sodium_ct)) cp <- merge(cp, sodium_ct, by = "location", all.x = TRUE)
+# baseline mean SBP & raised-BP fraction from data.in via lss_audit / data.out? use bp
+bp_src <- tryCatch({
+  b <- fread(paste0(wd_data, "bp_data6.csv"))
+  b[, .(sbp = mean(Mean, na.rm = TRUE), raised = mean(raisedBP, na.rm = TRUE)),
+    by = .(location)]
+}, error = function(e) NULL)
+if (!is.null(bp_src)) cp <- merge(cp, bp_src, by = "location", all.x = TRUE)
+cp <- cp[match(country_order, location)]
+cp_disp <- data.frame(
+  Country = cp$location,
+  `Adult population, 2030 (millions)` = formatC(cp$pop / 1e6, format = "f", digits = 1, big.mark = ","),
+  `Baseline sodium (g/day)` = if (!is.null(sodium_ct)) formatC(cp$sodium_current, format = "f", digits = 2) else "—",
+  `Mean SBP (mmHg)` = if (!is.null(bp_src)) formatC(cp$sbp, format = "f", digits = 0) else "—",
+  `Raised-BP fraction` = if (!is.null(bp_src)) pct(cp$raised, 0) else "—",
+  check.names = FALSE, stringsAsFactors = FALSE)
+add_tab("countries", "Countries and populations included", cp_disp,
+  units = "Population in millions; sodium in g/day; SBP in mmHg",
+  period = "Population at 2030; sodium baseline 2024",
+  population = POP_ADULT,
+  source = "UN WPP 2024 population; GBD/Marklund baseline sodium; NCD-RisC/GBD blood pressure.",
+  notes = "All ten RTSL priority countries are modelled. Nigeria serves as a proxy for Cameroon.")
+
+# T: Intervention effect-size summary (BRIEF, body) --------------------------
+eff_of <- function(iv, src) { v <- intervention_effects[intervention == iv & source == src, effect]
+  if (length(v) == 0) NA_real_ else v[1] }
+brief_eff <- data.frame(
+  Intervention = c("Public food procurement", "Salt targets (reformulation)",
+                   "Front-of-pack labelling", "Fiscal policy (salt tax, exploratory)",
+                   "Low-sodium salt substitutes (Scenario 2/4/5)"),
+  `Sodium source targeted` = c("Public/institutional food", "Packaged food",
+                   "Packaged food", "Packaged food", "Discretionary salt"),
+  `Modelled reduction of the target source` = c(
+     pct(eff_of("public_procurement", "public"), 0),
+     pct(eff_of("salt_targets", "packaged"), 0),
+     pct(eff_of("fopl", "packaged"), 1),
+     paste0(pct(RC$fiscal$base_effect, 0), " of packaged (base)"),
+     paste0(pct(RC$lss$eff_lss_na_k_discretionary, 0), " of discretionary Na + potassium gain")),
+  `Blood-pressure pathway` = c(rep("Lower sodium → lower SBP (Filippini: 2.8 mmHg/g raised BP, 1.0 mmHg/g normal BP)", 4),
+     "Lower sodium AND higher potassium → lower SBP (Filippini Na and K dose-responses)"),
+  check.names = FALSE, stringsAsFactors = FALSE)
+add_tab("eff_brief", "Modelled interventions and effect sizes", brief_eff,
+  units = "Relative reduction of the targeted sodium source at full implementation",
+  period = paste0("Scale-up ", SCALEUP_YEAR1, "–", SCALEUP_YEAR2),
+  source = "See the effect-size evidence table for study sources.",
+  notes = "Mass-media / behaviour-change campaigns are documented but excluded from reported scenarios. Fiscal policy is exploratory.")
+
+# T: MAIN country x intervention (client Table 1) ----------------------------
+main_scen <- c("public_procurement", "salt_targets", "fopl",
+               "fiscal_low", "fiscal_base", "fiscal_high",
+               "full_package_low", "full_package", "full_package_high")
+main_lab  <- c("Public food procurement", "Salt targets", "Front-of-pack labelling",
+               "Fiscal — low", "Fiscal — base", "Fiscal — high",
+               "Package total — low fiscal", "Package total — base fiscal",
+               "Package total — high fiscal")
+T_main <- mk_dd_table(main_scen, main_lab, total_lab = paste0("Total (", n_pri, " countries)"))
+add_tab("main", "Deaths delayed by country and intervention: packaged-food and public-procurement policies",
+  T_main$display, T_main$raw,
+  units = "Thousands of cardiovascular deaths delayed vs. baseline",
+  period = WINDOW, population = POP_ADULT,
+  scenario_def = "Each column is an independent model run. Package totals are joint runs of public procurement + salt targets + FOPL + fiscal (at the low/base/high fiscal variant); they are NOT the sum of the individual policy columns.",
+  rounding = "Nearest 100 deaths (0.1 thousand). Total row = sum of country rows per column.",
+  source = "Current model outputs.",
+  notes = "Fiscal policy is exploratory. Public-procurement uses a provisional 5% public-share pending adults-only inputs. Mass-media marketing is not included.",
+  fontsize = 8, orientation = "landscape")
+
+# T: LSS uptake (client Table 2) ---------------------------------------------
+s2_reg <- as.data.table(RC$scenarios)[grepl("^lss_s2_[0-9]+$", scenario)]
+s2_reg[, cov := as.numeric(lss_coverage)]; setorder(s2_reg, cov)
+lss_scen <- c(s2_reg$scenario, "lss_s4", "lss_s5")
+lss_lab  <- c(paste0("Scenario 2 — ", round(100 * s2_reg$cov), "% uptake"),
+              "Scenario 4 — diagnosed HTN", "Scenario 5 — treated HTN")
+T_lss <- mk_dd_table(lss_scen, lss_lab, total_lab = paste0("Total (", n_pri, " countries)"))
+add_tab("lss", "Deaths delayed by country: discretionary-sodium replacement with low-sodium salt substitutes",
+  T_lss$display, T_lss$raw,
+  units = "Thousands of cardiovascular deaths delayed vs. baseline",
+  period = WINDOW, population = POP_ADULT,
+  scenario_def = "Scenario 2 = whole-population LSS at the stated population uptake. Scenario 4 = adults with diagnosed hypertension. Scenario 5 = adults with treated hypertension (NCD-RisC eligibility).",
+  rounding = "Nearest 100 deaths (0.1 thousand). Total row = sum of country rows per column.",
+  source = "Current model outputs.",
+  notes = "Mechanistic sodium+potassium→SBP method (benefit-only; no hyperkalaemia/CKD harms). Uptake is population reach, distinct from adherence and the KCl substitution fraction.",
+  fontsize = 8, orientation = "landscape")
+
+# T: Deaths delayed by scenario (all-cause summary) --------------------------
+scn_sum_order <- c("public_procurement", "fopl", "salt_targets",
+                   "fiscal_low", "fiscal_base", "fiscal_high",
+                   s2_reg$scenario, "lss_s4", "lss_s5", "lss_s4_ssass", "lss_s5_ssass",
+                   "full_package_low", "full_package", "full_package_high")
+scn_sum_order <- scn_sum_order[scn_sum_order %in% as.character(dd_cum$scenario)]
+ss <- dd_cum[match(scn_sum_order, as.character(scenario))]
+scn_sum <- data.frame(
+  Scenario = clean_label(scenario_labels[as.character(ss$scenario)]),
+  `Deaths delayed (thousands)` = formatC(ss$deaths_delayed / 1e3, format = "f", digits = 1, big.mark = ","),
+  `Average per year (thousands)` = formatC(ss$per_year / 1e3, format = "f", digits = 1, big.mark = ","),
+  `% of baseline CVD deaths` = pct(ss$pct_vs_base, 2),
+  check.names = FALSE, stringsAsFactors = FALSE)
+scn_sum_raw <- data.frame(Scenario = clean_label(scenario_labels[as.character(ss$scenario)]),
+  deaths_delayed = ss$deaths_delayed, per_year = ss$per_year,
+  pct_of_baseline = 100 * ss$pct_vs_base, check.names = FALSE)
+add_tab("scn_summary", "Cumulative deaths delayed by scenario (all countries, all causes)",
+  scn_sum, scn_sum_raw,
+  units = "Thousands of deaths delayed; percent of baseline CVD deaths in the window",
+  period = WINDOW, population = POP_ADULT,
+  rounding = "Nearest 100 deaths (0.1 thousand).",
+  source = "Current model outputs.",
+  notes = "LSS scenarios are separate from the package. SSaSS trial-RR rows are a stroke-only benchmark.")
+
+# T: Full package by cause ---------------------------------------------------
+dd_cause_pkg <- deaths_delayed_by(data.out, by = "cause", years = impact_y1:impact_y2)
+dd_cause_pkg <- dd_cause_pkg[as.character(scenario) == "full_package"]
+setorder(dd_cause_pkg, -deaths_delayed)
+bycause <- data.frame(
+  Cause = cause_map[dd_cause_pkg$cause],
+  `Deaths delayed (thousands)` = formatC(dd_cause_pkg$deaths_delayed / 1e3, format = "f", digits = 1, big.mark = ","),
+  `Share of package total` = pct(dd_cause_pkg$deaths_delayed / sum(dd_cause_pkg$deaths_delayed), 1),
+  check.names = FALSE, stringsAsFactors = FALSE)
+bycause_raw <- data.frame(Cause = cause_map[dd_cause_pkg$cause],
+  deaths_delayed = dd_cause_pkg$deaths_delayed,
+  share = dd_cause_pkg$deaths_delayed / sum(dd_cause_pkg$deaths_delayed), check.names = FALSE)
+add_tab("bycause", "Full package: deaths delayed by cardiovascular cause",
+  bycause, bycause_raw,
+  units = "Thousands of deaths delayed; share of package total",
+  period = WINDOW, population = POP_ADULT,
+  scenario_def = "Full package at base fiscal.",
+  rounding = "Nearest 100 deaths.",
+  source = "Current model outputs.")
+
+# T: Limitations / assumptions -----------------------------------------------
+lim <- data.frame(
+  Area = c("Outcome metric", "LSS harms", "Fiscal policy", "Public procurement share",
+           "Hypertension eligibility", "Baseline potassium", "Packaged-food trend",
+           "Sodium-source data", "Uncertainty", "Mass-media marketing"),
+  `Assumption / limitation` = c(
+    "Sodium→SBP policies lower incidence, not case fatality, so deaths are DELAYED (shifted later), not permanently averted; totals depend on the accounting window.",
+    "LSS is modelled benefit-only: this disease model has no chronic-kidney-disease / hyperkalaemia state, so potential renal harms are not offset.",
+    "The salt-tax pathway is exploratory: pass-through, price elasticity, taxable share and substitution are uncertain, and broad-category elasticities may not transfer to high-sodium foods.",
+    "Public food-procurement uses a provisional 5% institutional share pending adults-only country data, so those results are provisional.",
+    "Diagnosed/treated hypertension shares (Scenarios 4/5) are age-standardised 30–79 values applied across all ages and held constant after the source year.",
+    "Potassium intake for Viet Nam and Ethiopia uses a regional mean rather than national data.",
+    "The packaged-food share follows a country-specific growth trend with an 80% ceiling and a post-2030 hold; these are extrapolation assumptions, and total sodium intake is held fixed (composition only).",
+    "Country source shares are documented but several (notably Nigeria/Cameroon) are provisional; other countries use a default average profile.",
+    "Effect sizes, coverage and dose-response anchors are treated as point estimates; no full probabilistic sensitivity analysis is run.",
+    "Mass-media / behaviour-change campaigns are documented but excluded from the reported scenarios and the package."),
+  check.names = FALSE, stringsAsFactors = FALSE)
+add_tab("limitations", "Key assumptions and limitations", lim,
+  source = "Model documentation.",
+  notes = "Provisional and exploratory items are flagged in the results.")
+
+cat("tr-tables: built", length(TAB), "core tables so far.\n")
+```
+
+```{r tr-appendix-tables, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# ------------------------------------------------ tr-tables-appendix ----
+# APPENDIX tables. Where report.RMD already built a clean, display-ready object
+# (he_tbl, bk_tbl, la_tbl, cmp_tbl, fa_tbl, pkg_trend_tbl, huang_cmp, saxena_cmp,
+# bt_fmt) we REUSE it so the Word doc and HTML report can never diverge.
+
+# Friendly-name map so no implementation-style identifiers reach the Word report.
+friendly_iv <- c(public_procurement = "public food procurement",
+  fopl = "front-of-pack labelling", salt_targets = "salt targets",
+  fiscal = "salt tax", fiscal_low = "salt tax (low)", fiscal_base = "salt tax (base)",
+  fiscal_high = "salt tax (high)", media_campaign = "mass-media campaign",
+  lss = "low-sodium salt substitute")
+friendly_ivs <- function(s) {
+  if (is.na(s) || s == "") return("None (baseline)")
+  parts <- trimws(strsplit(s, "\\+")[[1]])
+  paste(ifelse(parts %in% names(friendly_iv), friendly_iv[parts], parts), collapse = " + ")
+}
+
+# T: Scenario definitions ----------------------------------------------------
+scn_reg2 <- as.data.table(RC$scenarios)
+scn_def <- data.frame(
+  Scenario = clean_label(scn_reg2$label),
+  `Constituent interventions` = vapply(scn_reg2$interventions, friendly_ivs, character(1)),
+  check.names = FALSE, stringsAsFactors = FALSE, row.names = NULL)
+add_tab("scn_def", "Full scenario definitions", scn_def,
+  source = "Model scenario registry.",
+  notes = "The five Scenario-2 rows are the whole-population low-sodium-salt uptake sweep. SSaSS rows are a stroke-only benchmark. Package rows differ only in the salt-tax variant.")
+
+# T: Effect sizes & evidence (with sources) ----------------------------------
+eff_ev <- data.frame(
+  Intervention = c("Public food procurement & service", "Salt targets (reformulation)",
+    "Front-of-pack labelling", "Fiscal policy — salt tax (exploratory)",
+    "Low-sodium salt substitutes (LSS)", "Mass-media / behaviour change (excluded)",
+    "Sodium → blood pressure", "Blood pressure → cardiovascular disease"),
+  `Target source` = c("Public/institutional food", "Packaged food", "Packaged food",
+    "Packaged food", "Discretionary salt", "Discretionary + packaged",
+    "All sodium sources", "—"),
+  `Modelled effect` = c(
+    pct(eff_of("public_procurement", "public"), 0),
+    pct(eff_of("salt_targets", "packaged"), 0),
+    pct(eff_of("fopl", "packaged"), 1),
+    paste0(pct(RC$fiscal$base_effect, 0), " of packaged (base)"),
+    paste0(pct(RC$lss$eff_lss_na_k_discretionary, 0), " of discretionary Na + K gain"),
+    paste0(pct(eff_of("media_campaign", "packaged"), 0), " (not applied)"),
+    "2.8 mmHg/g (raised BP); 1.0 mmHg/g (normal BP)",
+    "Relative risk per 10 mmHg SBP, by cause"),
+  `Evidence source` = c(
+    "Gase et al. (2011)", "He et al. (2013)", "Taillie et al. (2024); Chile FOP warning labels",
+    "Saxena et al. (2025); Cobiac et al. (2017)",
+    "Huang et al. (2026); Neal et al. (2021); Filippini et al. (2020); Reddin et al. (2023)",
+    "Do et al. (2016)",
+    "Filippini et al. (2020, 2021)", "Ettehad et al. (2016); GBD 2019"),
+  check.names = FALSE, stringsAsFactors = FALSE)
+add_tab("eff_evidence", "Intervention effect sizes and evidence sources", eff_ev,
+  units = "Relative reduction of the targeted sodium source at full implementation, unless noted",
+  source = "See References. Modelled values follow the production configuration; documented study values may differ (e.g. salt targets ~15% observed, modelled 20%).",
+  notes = "The LSS effect combines a discretionary-sodium displacement with a potassium gain; its full health effect is not a single percentage.",
+  fontsize = 8, orientation = "landscape")
+
+# T: Sodium-source assumptions by country ------------------------------------
+ss_raw <- copy(source_shares)[location != "default"][match(country_order, location)]
+ss_appx_disp <- data.frame(
+  Country = ss_raw$location,
+  Discretionary = pct(ss_raw$discretionary, 1), Packaged = pct(ss_raw$packaged, 1),
+  Restaurant = pct(ss_raw$restaurant, 1), `Public/institutional` = pct(ss_raw$public, 1),
+  Inherent = pct(ss_raw$inherent, 1), check.names = FALSE, stringsAsFactors = FALSE)
+ss_appx_raw <- data.frame(Country = ss_raw$location,
+  Discretionary = ss_raw$discretionary, Packaged = ss_raw$packaged,
+  Restaurant = ss_raw$restaurant, Public = ss_raw$public, Inherent = ss_raw$inherent,
+  check.names = FALSE)
+add_tab("source_shares", "Sodium source shares by country (base year)", ss_appx_disp, ss_appx_raw,
+  units = "Fraction of total baseline sodium intake", period = paste0("Base year ", RC$euromonitor$base_year),
+  source = "RTSL sodium policy document; provisional for Nigeria/Cameroon.",
+  notes = "Rows sum to 100%. Inherent sodium is never targeted. Shares become year-specific via the packaged-food trend.")
+
+# T: NCD-RisC eligibility (reuse he_tbl) -------------------------------------
+if (exists("he_tbl")) add_tab("ncd_elig", "Hypertension eligibility by country and sex (Scenarios 4 and 5)",
+  as.data.frame(he_tbl),
+  units = "Age-standardised proportions (30–79)", period = paste0("Source year ", RC$htn_source_year),
+  source = "NCD-RisC (2021).",
+  notes = "Diagnosed/treated population shares size LSS Scenarios 4 and 5.", fontsize = 8)
+
+# T: Baseline potassium (reuse bk_tbl) ---------------------------------------
+if (exists("bk_tbl")) add_tab("baseline_k", "Baseline potassium intake by country and sex",
+  as.data.frame(bk_tbl), units = "g/day",
+  source = "Reddin et al. (2023); region-mean fallback for Viet Nam and Ethiopia.")
+
+# T: LSS Na/K audit (reuse la_tbl) -------------------------------------------
+if (exists("la_tbl")) add_tab("lss_audit", "Low-sodium salt substitute pathway quantities (Scenario 2, representative coverage)",
+  as.data.frame(la_tbl),
+  units = "Sodium/potassium in g/day; SBP change in mmHg",
+  source = "Current model (LSS mechanistic audit).",
+  notes = "Composition scales linearly with coverage; harms not modelled.", fontsize = 8, orientation = "landscape")
+
+# T: Na/K vs SSaSS (reuse cmp_tbl; strip implementation-style tokens) --------
+if (exists("cmp_tbl")) {
+  cmp_clean <- as.data.frame(cmp_tbl)
+  if ("Method" %in% names(cmp_clean))
+    cmp_clean$Method <- c(na_k_sbp = "Sodium/potassium → SBP (mechanistic)",
+      ssass_trial_rr = "SSaSS trial benchmark")[cmp_clean$Method]
+  if ("Eligibility" %in% names(cmp_clean))
+    cmp_clean$Eligibility <- c(whole_population = "Whole population",
+      diagnosed_pop = "Diagnosed hypertension", treated_pop = "Treated hypertension")[cmp_clean$Eligibility]
+  add_tab("nak_ssass", "Low-sodium salt substitutes: mechanistic sodium/potassium vs. SSaSS trial benchmark",
+    cmp_clean,
+    units = "Exposure change in g/day; SBP in mmHg; deaths delayed in millions",
+    period = WINDOW, source = "Current model outputs.",
+    notes = "Distinct pathways (all-CVD via blood pressure vs. stroke-only relative risk); shown side by side, never combined.", fontsize = 8, orientation = "landscape")
+}
+
+# T: Fiscal pathway (reuse fa_tbl; friendly variant names) -------------------
+if (exists("fa_tbl")) {
+  fa_clean <- as.data.frame(fa_tbl)
+  if ("Variant" %in% names(fa_clean))
+    fa_clean$Variant <- c(fiscal_low = "Low", fiscal_base = "Base",
+      fiscal_high = "High", fiscal = "Base")[fa_clean$Variant]
+  add_tab("fiscal_path", "Salt-tax pathway by sensitivity variant (exploratory)",
+    fa_clean,
+    units = "Percentages except elasticity", source = "Saxena et al. (2025); current model.",
+    notes = "Exploratory. 'Δ total packaged' = Δ taxed packaged × taxable share.", fontsize = 7, orientation = "landscape")
+}
+
+# T: Packaged-food trend (reuse pkg_trend_tbl) -------------------------------
+if (exists("pkg_trend_tbl") && !is.null(pkg_trend_tbl)) add_tab("pkg_trend", "Packaged-food sodium-share growth by country",
+  as.data.frame(pkg_trend_tbl),
+  units = "Annual percent change; packaged share in percent",
+  source = "Euromonitor (Marklund v002).",
+  notes = paste0("Applied as (1+g)^(year−base) to the packaged share, capped at ",
+    pct(RC$euromonitor$ceiling, 0), "; other sources renormalise; composition-only."))
+
+# T: Key model inputs & parameters -------------------------------------------
+key_inputs <- data.frame(
+  Parameter = c("Countries modelled", "Baseline (seed) year", "Scale-up window",
+    "Projection horizon", "Results years", "Cardiovascular causes", "Sodium sources",
+    "Sodium→SBP slope (raised BP / normal BP)", "Minimum sodium floor",
+    "LSS composition (NaCl / KCl)", "LSS adherence", "LSS uptake among reached",
+    "K added per g Na displaced", "K unit conversion (mg/mmol; intake→excretion)",
+    "Non-hypertensive K attenuation", "Whole-population LSS coverage sweep",
+    "Packaged trend base year / ceiling / post-2030",
+    "Fiscal base (tax / pass-through / elasticity / taxable share)"),
+  Value = c(as.character(n_pri), as.character(RC$analysis_years[1]),
+    paste0(SCALEUP_YEAR1, "–", SCALEUP_YEAR2), as.character(RC$analysis_years[2]),
+    paste(RC$impact_years, collapse = ", "),
+    "IHD, ischaemic stroke, intracerebral haemorrhage, hypertensive heart disease",
+    "Discretionary, packaged, restaurant, public, inherent",
+    "2.8 / 1.0 mmHg per g/day", "2 g/day (WHO)",
+    paste0(pct(RC$lss$nacl_fraction, 0), " / ", pct(RC$lss$kcl_fraction, 0)),
+    formatC(RC$lss$adherence, format = "f", digits = 2),
+    formatC(RC$lss$uptake, format = "f", digits = 2),
+    paste0("≈", formatC(RC$lss$k_per_g_kcl / RC$lss$na_per_g_nacl, format = "f", digits = 2), " g"),
+    paste0(RC$lss$k_mg_per_mmol, " ; ÷", RC$lss$k_intake_to_excretion),
+    paste0("×", formatC(RC$lss$nonhtn_factor, format = "f", digits = 2)),
+    paste0(paste(round(100 * s2_reg$cov), collapse = ", "), "%"),
+    paste0("base ", RC$euromonitor$base_year, "; ceiling ", pct(RC$euromonitor$ceiling, 0), "; ", .euro_post2030),
+    paste0(pct(RC$fiscal$base$tax_rate, 0), " / ", pct(RC$fiscal$base$pass_through, 0), " / ",
+           formatC(RC$fiscal$base$elasticity, format = "f", digits = 2), " / ", pct(RC$fiscal$base$taxable_share, 0))),
+  check.names = FALSE, stringsAsFactors = FALSE)
+add_tab("key_inputs", "Key model inputs and parameters", key_inputs,
+  source = "Model configuration.")
+
+# T: Benchmark (reuse bt_fmt if available) -----------------------------------
+if (exists("benchmark_available") && isTRUE(benchmark_available) && exists("bt_fmt"))
+  add_tab("benchmark", "Benchmark: current full package vs. previous 30% sodium-reduction estimate",
+    as.data.frame(bt_fmt),
+    units = "Millions of deaths delayed; percent of each model's own baseline",
+    period = WINDOW, source = "Current model vs. 100 Million Lives Saved model.",
+    notes = "Contextual comparison; scenarios and horizons are not fully equivalent.", fontsize = 8, orientation = "landscape")
+
+# T: Huang & Saxena comparisons (reuse) --------------------------------------
+if (exists("huang_cmp")) add_tab("huang", "Low-sodium salt substitute model vs. Huang et al. (2026)",
+  huang_cmp, source = "Huang et al. (2026); current model.", fontsize = 8, orientation = "landscape")
+if (exists("saxena_cmp")) add_tab("saxena", "Fiscal model vs. Saxena et al. (2025)",
+  saxena_cmp, source = "Saxena et al. (2025); current model.", fontsize = 8, orientation = "landscape")
+
+cat("tr-tables-appendix: total tables =", length(TAB), "\n")
+```
+
+```{r tr-figures, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# ------------------------------------------------------------- tr-figures ----
+# All figures are saved as 300-dpi PNGs into docs/report_assets/ and the plotted
+# data is captured for the workbook. Schematic diagrams carry no data table.
+
+mk_flow2 <- function(labels, fill = "#e8eef4", border = "#1f78b4", tsize = 3.0) {
+  n <- length(labels); bx <- data.table(x = seq_len(n), label = labels)
+  ar <- data.table(x = (seq_len(n - 1)) + 0.46, xend = (2:n) - 0.46, y = 1, yend = 1)
+  ggplot() +
+    geom_tile(data = bx, aes(x = x, y = 1), width = 0.88, height = 0.7,
+              fill = fill, color = border, linewidth = 0.7) +
+    geom_text(data = bx, aes(x = x, y = 1, label = label), size = tsize, lineheight = 0.95) +
+    geom_segment(data = ar, aes(x = x, xend = xend, y = y, yend = yend),
+                 arrow = arrow(length = unit(0.14, "cm"), type = "closed"),
+                 linewidth = 0.5, color = "grey30") +
+    coord_cartesian(xlim = c(0.5, n + 0.5), ylim = c(0.55, 1.45)) + theme_void(base_size = 11)
+}
+
+# f01: overall framework -----------------------------------------------------
+p_f01 <- mk_flow2(c("Sodium sources\n(5 per country)", "Policy effects\n× source shares",
+  "Total sodium\nreduction (η)", "Blood pressure\n(± potassium)", "CVD incidence\n(4 causes)",
+  "Well→Sick→Dead\nstate transitions", "Deaths\ndelayed"), tsize = 2.7)
+add_fig("framework", "Overall model framework", basename(save_tr_fig(p_f01, "fig_tr_framework.png", 11, 2.2)),
+  11, 2.2, notes = "The intervention-to-deaths-delayed causal chain.")
+
+# f02: sodium-source & intervention map --------------------------------------
+map_dt <- data.table(
+  source = factor(rep(c("Discretionary", "Packaged", "Restaurant", "Public", "Inherent"), each = 6),
+                  levels = rev(c("Discretionary", "Packaged", "Restaurant", "Public", "Inherent"))),
+  intervention = factor(rep(c("Public procurement", "Salt targets", "FOP labelling",
+                             "Fiscal (tax)", "LSS", "Media (excluded)"),
+                         times = 5),
+                    levels = c("Public procurement", "Salt targets", "FOP labelling",
+                               "Fiscal (tax)", "LSS", "Media (excluded)")))
+hits <- rbind(
+  data.table(source = "Public", intervention = "Public procurement"),
+  data.table(source = "Packaged", intervention = "Salt targets"),
+  data.table(source = "Packaged", intervention = "FOP labelling"),
+  data.table(source = "Packaged", intervention = "Fiscal (tax)"),
+  data.table(source = "Discretionary", intervention = "LSS"),
+  data.table(source = "Discretionary", intervention = "Media (excluded)"),
+  data.table(source = "Packaged", intervention = "Media (excluded)"))
+map_dt[, hit := "no"]
+map_dt[hits, on = c("source", "intervention"), hit := "yes"]
+map_dt[intervention == "Media (excluded)" & hit == "yes", hit := "excluded"]
+p_f02 <- ggplot(map_dt, aes(intervention, source, fill = hit)) +
+  geom_tile(colour = "white", linewidth = 1.2, width = 0.95, height = 0.95) +
+  scale_fill_manual(values = c(no = "#f0f0f0", yes = "#1f78b4", excluded = "#b0b0d0"),
+                    labels = c(no = "Not targeted", yes = "Targeted", excluded = "Documented, excluded"),
+                    name = NULL) +
+  labs(title = "Which policy acts on which sodium source",
+       x = NULL, y = NULL) + tr_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1), panel.grid = element_blank())
+add_fig("map", "Sodium-source and intervention map",
+  basename(save_tr_fig(p_f02, "fig_tr_map.png", 8.5, 4)), 8.5, 4,
+  notes = "Inherent sodium is never targeted. Mass media is documented but excluded.")
+
+# f03: source shares by country ----------------------------------------------
+sl <- melt(ss_raw[, c("location", SODIUM_SOURCES), with = FALSE], id.vars = "location",
+           variable.name = "source", value.name = "share")
+sl[, location := factor(location, levels = rev(country_order))]
+sl[, source := factor(source, levels = SODIUM_SOURCES)]
+p_f03 <- ggplot(sl, aes(share, location, fill = source)) +
+  geom_col(width = 0.8, colour = "white", linewidth = 0.2) +
+  scale_fill_manual(values = source_cols, labels = source_labels, breaks = SODIUM_SOURCES,
+                    name = "Sodium source") +
+  scale_x_continuous(labels = percent, expand = expansion(mult = c(0, 0.02))) +
+  labs(title = "Sodium source shares by country", x = "Share of total sodium intake", y = NULL) + tr_theme
+f03_data <- dcast(sl, location ~ source, value.var = "share")
+add_fig("shares", "Sodium source shares by country",
+  basename(save_tr_fig(p_f03, "fig_tr_shares.png", 8.5, 4.2)), 8.5, 4.2,
+  data = as.data.frame(f03_data), source = "RTSL sodium policy document.")
+
+# f04: packaged share over time ----------------------------------------------
+pk <- source_shares_by_year[location %in% country_order & year >= RC$euromonitor$base_year &
+                            year <= impact_y2]
+p_f04 <- ggplot(pk, aes(year, packaged, colour = location)) +
+  geom_hline(yintercept = RC$euromonitor$ceiling, linetype = "dashed", colour = "grey60") +
+  geom_line(linewidth = 0.9) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "Packaged share of sodium over time, by country",
+       subtitle = paste0("Packaged share capped at ", pct(RC$euromonitor$ceiling, 0), "; after 2030 ", .euro_post2030),
+       x = NULL, y = "Packaged share of total sodium", colour = NULL) + tr_theme +
+  theme(legend.position = "right")
+add_fig("packaged_time", "Packaged share of sodium over time",
+  basename(save_tr_fig(p_f04, "fig_tr_packaged_time.png", 9, 4.2)), 9, 4.2,
+  data = as.data.frame(dcast(pk[, .(location, year, packaged)], year ~ location, value.var = "packaged")),
+  source = "Euromonitor (Marklund v002).")
+
+# f05: LSS Na/K pathway ------------------------------------------------------
+p_f05 <- mk_flow2(c("Switch to LSS\n75% NaCl / 25% KCl", "↓ discretionary sodium\n+ ↑ potassium",
+  "↓ SBP\nΔSBP(Na) + ΔSBP(K)", "↓ CVD incidence\nall four causes", "Deaths\ndelayed"),
+  fill = "#e8f2ea", border = "#59A14F", tsize = 2.7)
+add_fig("lss_pathway", "Low-sodium salt substitute causal pathway (sodium + potassium → blood pressure)",
+  basename(save_tr_fig(p_f05, "fig_tr_lss_pathway.png", 10.5, 2.1)), 10.5, 2.1,
+  notes = "Benefit-only: no hyperkalaemia/CKD harm channel.")
+
+# f06: headline deaths delayed by intervention -------------------------------
+hl_scen <- c("public_procurement", "fopl", "salt_targets", "fiscal_base",
+             "full_package", "lss_s4", "lss_s5", tail(s2_reg$scenario, 1))
+hl_scen <- hl_scen[hl_scen %in% as.character(dd_cum$scenario)]
+hl <- dd_cum[as.character(scenario) %in% hl_scen]
+hl[, lab := factor(scenario_labels_short[as.character(scenario)],
+                   levels = scenario_labels_short[as.character(hl[order(deaths_delayed), scenario])])]
+p_f06 <- ggplot(hl, aes(deaths_delayed / 1e6, lab, fill = scenario)) +
+  geom_col(width = 0.68) +
+  geom_text(aes(label = fmtm(deaths_delayed, 2)), hjust = -0.12, size = 3) +
+  scale_fill_manual(values = scenario_cols, guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.15)), labels = comma) +
+  labs(title = "Deaths delayed by intervention", subtitle = paste0(n_pri, " countries, ", WINDOW),
+       x = "Deaths delayed (millions)", y = NULL) + tr_theme +
+  theme(panel.grid.major.y = element_blank())
+f06_data <- data.frame(Scenario = clean_label(scenario_labels[as.character(hl$scenario)]),
+  deaths_delayed = hl$deaths_delayed, deaths_delayed_millions = hl$deaths_delayed / 1e6)
+add_fig("headline", "Deaths delayed by intervention",
+  basename(save_tr_fig(p_f06, "fig_tr_headline.png", 8.5, 4)), 8.5, 4,
+  data = f06_data, source = "Current model outputs.")
+
+# f07: deaths delayed by country (full package) ------------------------------
+ddc7 <- dd_cs[scenario == "full_package"][order(deaths_delayed)]
+ddc7[, location := factor(location, levels = location)]
+p_f07 <- ggplot(ddc7, aes(deaths_delayed / 1e3, location)) +
+  geom_col(fill = "#1f78b4", width = 0.72) +
+  geom_text(aes(label = formatC(deaths_delayed / 1e3, format = "f", digits = 0, big.mark = ",")),
+            hjust = -0.12, size = 3) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.16)), labels = comma) +
+  labs(title = "Full package: deaths delayed by country", subtitle = WINDOW,
+       x = "Deaths delayed (thousands)", y = NULL) + tr_theme +
+  theme(panel.grid.major.y = element_blank())
+add_fig("countries", "Full package: deaths delayed by country",
+  basename(save_tr_fig(p_f07, "fig_tr_countries.png", 8, 4.2)), 8, 4.2,
+  data = data.frame(Country = as.character(ddc7$location), deaths_delayed = ddc7$deaths_delayed),
+  source = "Current model outputs.")
+
+# f08: full package by cause -------------------------------------------------
+dc8 <- copy(dd_cause_pkg); dc8[, cl := factor(cause_map[cause], levels = cause_map[cause])]
+p_f08 <- ggplot(dc8, aes(deaths_delayed / 1e6, reorder(cl, deaths_delayed), fill = cause)) +
+  geom_col(width = 0.66) +
+  geom_text(aes(label = fmtm(deaths_delayed, 2)), hjust = -0.12, size = 3) +
+  scale_fill_manual(values = cause_cols, guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.16)), labels = comma) +
+  labs(title = "Full package: deaths delayed by cause", subtitle = WINDOW,
+       x = "Deaths delayed (millions)", y = NULL) + tr_theme +
+  theme(panel.grid.major.y = element_blank())
+add_fig("bycause", "Full package: deaths delayed by cause",
+  basename(save_tr_fig(p_f08, "fig_tr_bycause.png", 8, 3.4)), 8, 3.4,
+  data = bycause_raw, source = "Current model outputs.")
+
+# f09: LSS Scenario 2 uptake response ----------------------------------------
+s2_dd <- dd_cs[scenario %in% s2_reg$scenario]
+s2_dd <- merge(s2_dd, s2_reg[, .(scenario, cov)], by = "scenario")
+s2_tot <- s2_dd[, .(deaths_delayed = sum(deaths_delayed)), by = cov][, location := "Total (10 countries)"]
+big4 <- head(country_order, 4)
+s2_plot <- rbind(s2_dd[location %in% big4, .(cov, location, deaths_delayed)],
+                 s2_tot[, .(cov, location, deaths_delayed)])
+s2_plot[, location := factor(location, levels = c("Total (10 countries)", big4))]
+p_f09 <- ggplot(s2_plot, aes(100 * cov, deaths_delayed / 1e6, colour = location)) +
+  geom_line(linewidth = 0.9) + geom_point(size = 1.6) +
+  scale_x_continuous(breaks = round(100 * s2_reg$cov)) +
+  labs(title = "Low-sodium salt substitutes: deaths delayed by population uptake (Scenario 2)",
+       subtitle = paste0(WINDOW, "; whole-population coverage 10–50%"),
+       x = "Population uptake (%)", y = "Deaths delayed (millions)", colour = NULL) + tr_theme
+f09_data <- dcast(rbind(s2_dd[, .(cov, location, deaths_delayed)],
+                        s2_tot[, .(cov, location, deaths_delayed)]),
+                  location ~ cov, value.var = "deaths_delayed")
+setnames(f09_data, c("location", as.character(sort(unique(s2_reg$cov)))),
+         c("Country", paste0(round(100 * sort(unique(s2_reg$cov))), "%")))
+add_fig("lss_uptake", "Low-sodium salt substitutes: deaths delayed by population uptake",
+  basename(save_tr_fig(p_f09, "fig_tr_lss_uptake.png", 8.5, 4.2)), 8.5, 4.2,
+  data = as.data.frame(f09_data), source = "Current model outputs.")
+
+# f10: fiscal pathway schematic ----------------------------------------------
+p_f10 <- mk_flow2(c("Salt tax\n(rate)", "Price ↑\n(× pass-through)", "Quantity ↓\n(× elasticity)",
+  "↓ taxed packaged\n(× taxable share)", "↓ packaged\nsodium", "↓ total sodium\n→ SBP → CVD"),
+  fill = "#efe8f4", border = "#6a3d9a", tsize = 2.6)
+add_fig("fiscal_pathway", "Fiscal-policy (salt-tax) pathway",
+  basename(save_tr_fig(p_f10, "fig_tr_fiscal_pathway.png", 11, 2.1)), 11, 2.1,
+  notes = "Exploratory pathway; parameters are uncertain.")
+
+cat("tr-figures: built", length(FIG), "figures.\n")
+```
+
+```{r tr-bundle, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# -------------------------------------------------------------- tr-numbers ----
+ddc_scn <- function(scn) { v <- dd_cum[as.character(scenario) == scn, deaths_delayed]
+  if (length(v)) v[1] else NA_real_ }
+pkg_base   <- ddc_scn("full_package")
+pkg_pct    <- dd_cum[as.character(scenario) == "full_package", pct_vs_base][1]
+pkg_peryr  <- dd_cum[as.character(scenario) == "full_package", per_year][1]
+china_pkg  <- dd_cs[scenario == "full_package" & location == "China", deaths_delayed]
+top_cause  <- dd_cause_pkg[1]
+s2_lo <- s2_reg$scenario[which.min(s2_reg$cov)]; s2_hi <- s2_reg$scenario[which.max(s2_reg$cov)]
+
+TRnums <- list(
+  n_countries   = n_pri,
+  window        = WINDOW,
+  scaleup       = paste0(SCALEUP_YEAR1, "–", SCALEUP_YEAR2),
+  horizon       = RC$analysis_years[2],
+  results_years = paste(RC$impact_years, collapse = ", "),
+  pkg_m         = fmtm(pkg_base, 2),
+  pkg_pct       = pct(pkg_pct, 1),
+  pkg_peryr_k   = fmtk(pkg_peryr, 0),
+  china_pkg_m   = fmtm(china_pkg, 2),
+  china_share   = pct(china_pkg / pkg_base, 0),
+  salt_targets_m = fmtm(ddc_scn("salt_targets"), 2),
+  fopl_m         = fmtm(ddc_scn("fopl"), 2),
+  public_m       = fmtm(ddc_scn("public_procurement"), 2),
+  fiscal_base_m  = fmtm(ddc_scn("fiscal_base"), 2),
+  fiscal_low_m   = fmtm(ddc_scn("fiscal_low"), 2),
+  fiscal_high_m  = fmtm(ddc_scn("fiscal_high"), 2),
+  pkg_low_m      = fmtm(ddc_scn("full_package_low"), 2),
+  pkg_high_m     = fmtm(ddc_scn("full_package_high"), 2),
+  lss_s2_lo_m    = fmtm(ddc_scn(s2_lo), 2),
+  lss_s2_hi_m    = fmtm(ddc_scn(s2_hi), 2),
+  lss_s2_lo_pct  = paste0(round(100 * min(s2_reg$cov)), "%"),
+  lss_s2_hi_pct  = paste0(round(100 * max(s2_reg$cov)), "%"),
+  lss_s4_m       = fmtm(ddc_scn("lss_s4"), 2),
+  lss_s5_m       = fmtm(ddc_scn("lss_s5"), 2),
+  top_cause      = tolower(cause_map[top_cause$cause]),
+  top_cause_m    = fmtm(top_cause$deaths_delayed, 2),
+  top_cause_pct  = pct(top_cause$deaths_delayed / sum(dd_cause_pkg$deaths_delayed), 0),
+  lss_nacl       = pct(RC$lss$nacl_fraction, 0),
+  lss_kcl        = pct(RC$lss$kcl_fraction, 0),
+  lss_adherence  = formatC(RC$lss$adherence, format = "f", digits = 2),
+  fiscal_base_red = pct(RC$fiscal$base_effect, 0),
+  fiscal_tax      = pct(RC$fiscal$base$tax_rate, 0),
+  bench_ratio    = if (exists("bench_ratio_tot") && is.finite(bench_ratio_tot))
+                     formatC(bench_ratio_tot, format = "f", digits = 2) else "n/a",
+  bench_cur_m    = if (exists("bench_cur_tot")  && is.finite(bench_cur_tot))  fmtm(bench_cur_tot, 2)  else "n/a",
+  bench_prev_m   = if (exists("bench_prev_tot") && is.finite(bench_prev_tot)) fmtm(bench_prev_tot, 2) else "n/a"
+)
+
+# -------------------------------------------------------------- tr-dictionary --
+DICT <- data.frame(
+  Term = c("Deaths delayed", "Total sodium reduction fraction (η)", "Sodium source split",
+    "Scenario 2 (LSS)", "Scenario 4 (LSS)", "Scenario 5 (LSS)", "Population uptake",
+    "Adherence", "Full package", "Fiscal low / base / high", "SSaSS trial benchmark",
+    "Sodium → SBP → CVD", "Case fatality", "Baseline"),
+  Definition = c(
+    "Baseline cardiovascular deaths minus scenario deaths, summed over the results window. Because these policies lower incidence (not case fatality), deaths are shifted later rather than permanently removed.",
+    "The country- and year-specific fraction of total sodium intake removed by a scenario, obtained by weighting each policy's source-specific reduction by that source's share of intake.",
+    "Baseline sodium is divided into five sources — discretionary, packaged, restaurant, public/institutional and inherent — that sum to 100%; each policy acts only on the sources it can reach.",
+    "Whole-population replacement of discretionary salt with a low-sodium salt substitute, reported at 10–50% population uptake.",
+    "Low-sodium salt substitute for adults with diagnosed hypertension.",
+    "Low-sodium salt substitute for adults with treated hypertension.",
+    "The share of the target population that adopts the intervention (population reach).",
+    "The fraction of a user's salt that is actually the substitute (SSaSS year-5 ≈ 0.92).",
+    "The combined public procurement + salt targets + front-of-pack labelling + fiscal policy, run jointly.",
+    "The full package evaluated with the low, base or high fiscal-policy variant.",
+    "An alternative low-sodium salt estimate using the SSaSS trial's stroke relative risks; applies only to hypertension populations and stroke outcomes.",
+    "The modelled causal chain: less sodium (and, for substitutes, more potassium) lowers systolic blood pressure, which lowers cardiovascular disease incidence.",
+    "The probability that a person with disease dies of it in a year; held at baseline for sodium→blood-pressure policies.",
+    "The no-intervention projection against which all scenarios are compared."),
+  check.names = FALSE, stringsAsFactors = FALSE)
+
+# ------------------------------------------------------------- tr-bundle -------
+# Canonical Word-appearance order: this MUST match the order in which the table and
+# figure chunks appear in docs/technical-report.RMD, because bookdown numbers them
+# by appearance. The workbook mirrors these numbers, so the two match exactly (a QA
+# check cross-verifies the rendered caption numbers against these).
+TABLE_ORDER <- c("countries", "eff_brief", "main", "lss", "bycause", "limitations",
+  "scn_def", "eff_evidence", "fiscal_path", "nak_ssass", "source_shares", "ncd_elig",
+  "baseline_k", "pkg_trend", "key_inputs", "lss_audit", "huang", "benchmark",
+  "scn_summary", "saxena")
+FIGURE_ORDER <- c("framework", "shares", "map", "packaged_time", "lss_pathway",
+  "headline", "fiscal_pathway", "lss_uptake", "countries", "bycause")
+
+TABLE_ORDER  <- TABLE_ORDER[TABLE_ORDER %in% names(TAB)]
+FIGURE_ORDER <- FIGURE_ORDER[FIGURE_ORDER %in% names(FIG)]
+for (i in seq_along(TABLE_ORDER))  TAB[[TABLE_ORDER[i]]]$num  <- i
+for (i in seq_along(FIGURE_ORDER)) FIG[[FIGURE_ORDER[i]]]$num <- i
+for (k in names(TAB)) TAB[[k]]$id <- paste0("Table ",  TAB[[k]]$num)
+for (k in names(FIG)) FIG[[k]]$id <- paste0("Figure ", FIG[[k]]$num)
+
+TR <- list(
+  meta = list(
+    generated       = format(Sys.time(), "%Y-%m-%d"),
+    n_countries     = n_pri,
+    country_order   = country_order,
+    window          = WINDOW,
+    scaleup         = c(SCALEUP_YEAR1, SCALEUP_YEAR2),
+    baseline_year   = RC$analysis_years[1],
+    horizon         = RC$analysis_years[2],
+    results_years   = RC$impact_years,
+    scenarios       = as.data.frame(as.data.table(RC$scenarios)),
+    lss             = RC$lss, fiscal = RC$fiscal, euromonitor = RC$euromonitor,
+    provisional     = c("Public food procurement (5% institutional share pending adults-only data)",
+                        "Fiscal policy (exploratory salt-tax pathway)",
+                        "Nigeria/Cameroon source shares (Nigeria used as Cameroon proxy)",
+                        "Mass-media marketing (documented, excluded)")),
+  nums = TRnums, dict = DICT,
+  tab = TAB, fig = FIG,
+  table_order = TABLE_ORDER, figure_order = FIGURE_ORDER,
+  assets_dir = "report_assets")
+
+saveRDS(TR, file = file.path(ra_dir, "tr_bundle.rds"))
+cat("tr-bundle: wrote", file.path(ra_dir, "tr_bundle.rds"), "with",
+    length(TABLE_ORDER), "tables and", length(FIGURE_ORDER), "figures.\n")
+```
+
+```{r tr-xlsx, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# ---------------------------------------------------------------- tr-xlsx ----
+# docs/technical-report.xlsx, built from the SAME prepared objects that feed the
+# Word report so the two can never diverge. Sheets: Contents, Dictionary, one per
+# table, one per data figure (image + plotted data), a Diagrams sheet, and a
+# Figure index. Table/figure identifiers match the Word report exactly.
+wb <- createWorkbook()
+hdr   <- createStyle(textDecoration = "bold", fgFill = "#1F4E5F", fontColour = "white",
+                     halign = "center", valign = "center", border = "TopBottomLeftRight",
+                     borderColour = "#DDDDDD", wrapText = TRUE)
+ttl   <- createStyle(textDecoration = "bold", fontSize = 13, fontColour = "#1F4E5F")
+meta_s<- createStyle(fontSize = 9, fontColour = "#555555")
+labur <- createStyle(textDecoration = "bold", fontSize = 9, fontColour = "#333333")
+wrapc <- createStyle(wrapText = TRUE, valign = "top")
+
+short_of <- function(key) {
+  s <- gsub("[^A-Za-z0-9]", "", tools::toTitleCase(gsub("_", " ", key)))
+  substr(s, 1, 18)
+}
+sheet_name <- function(prefix, num, key) {
+  nm <- sprintf("%s%02d_%s", prefix, num, short_of(key))
+  substr(nm, 1, 31)
+}
+
+write_meta_block <- function(sheet, tabobj) {
+  writeData(wb, sheet, paste0(tabobj$id, ". ", tabobj$title), startCol = 1, startRow = 1)
+  addStyle(wb, sheet, ttl, rows = 1, cols = 1)
+  rows <- list(c("Units", tabobj$units), c("Period", tabobj$period),
+               c("Population", tabobj$population), c("Scenario", tabobj$scenario_def),
+               c("Rounding", tabobj$rounding), c("Source", tabobj$source),
+               c("Notes", tabobj$notes))
+  rows <- Filter(function(r) nzchar(r[2]), rows)
+  r <- 2
+  for (rr in rows) {
+    writeData(wb, sheet, rr[1], startCol = 1, startRow = r)
+    writeData(wb, sheet, rr[2], startCol = 2, startRow = r)
+    addStyle(wb, sheet, labur, rows = r, cols = 1)
+    addStyle(wb, sheet, meta_s, rows = r, cols = 2)
+    r <- r + 1
+  }
+  r + 1  # first free row after a blank line
+}
+
+# ---- Contents sheet (placeholder rows filled after sheets exist) ------------
+addWorksheet(wb, "Contents", tabColour = "#1F4E5F")
+contents <- data.frame(Reference = character(), Title = character(),
+                       Sheet = character(), Type = character(),
+                       check.names = FALSE, stringsAsFactors = FALSE)
+
+# ---- Table sheets -----------------------------------------------------------
+tab_sheets <- character(0)
+for (key in TR$table_order) {
+  tb <- TAB[[key]]
+  sh <- sheet_name("T", tb$num, key); tab_sheets[key] <- sh
+  addWorksheet(wb, sh)
+  first <- write_meta_block(sh, tb)
+  df <- tb$display
+  writeData(wb, sh, df, startRow = first, startCol = 1, headerStyle = hdr,
+            borders = "all", borderColour = "#E0E0E0")
+  setColWidths(wb, sh, cols = 1:ncol(df), widths = "auto")
+  setColWidths(wb, sh, cols = 1, widths = 26)
+  addStyle(wb, sh, wrapc, rows = (first + 1):(first + nrow(df)),
+           cols = 1:ncol(df), gridExpand = TRUE, stack = TRUE)
+  freezePane(wb, sh, firstActiveRow = first + 1)
+  addFilter(wb, sh, rows = first, cols = 1:ncol(df))
+  contents <- rbind(contents, data.frame(Reference = tb$id, Title = tb$title,
+    Sheet = sh, Type = "Table", check.names = FALSE))
+}
+
+# ---- Figure sheets (image + plotted data) & Diagrams ------------------------
+fig_sheets <- character(0)
+diagram_keys <- c()
+for (key in TR$figure_order) {
+  fg <- FIG[[key]]
+  if (is.null(fg$data)) { diagram_keys <- c(diagram_keys, key); next }
+  sh <- sheet_name("F", fg$num, key); fig_sheets[key] <- sh
+  addWorksheet(wb, sh)
+  writeData(wb, sh, paste0(fg$id, ". ", fg$title), startCol = 1, startRow = 1)
+  addStyle(wb, sh, ttl, rows = 1, cols = 1)
+  if (nzchar(fg$notes)) { writeData(wb, sh, fg$notes, startCol = 1, startRow = 2)
+    addStyle(wb, sh, meta_s, rows = 2, cols = 1) }
+  img <- file.path(ra_dir, fg$file)
+  insertImage(wb, sh, img, width = min(fg$w, 7.5), height = min(fg$w, 7.5) * fg$h / fg$w,
+              startRow = 4, startCol = 1, units = "in")
+  drow <- 4 + ceiling(min(fg$w, 7.5) * fg$h / fg$w * 5.2) + 2
+  writeData(wb, sh, "Plotted data", startCol = 1, startRow = drow - 1)
+  addStyle(wb, sh, labur, rows = drow - 1, cols = 1)
+  writeData(wb, sh, fg$data, startRow = drow, startCol = 1, headerStyle = hdr,
+            borders = "all", borderColour = "#E0E0E0")
+  setColWidths(wb, sh, cols = 1:ncol(fg$data), widths = "auto")
+  contents <- rbind(contents, data.frame(Reference = fg$id, Title = fg$title,
+    Sheet = sh, Type = "Figure (+data)", check.names = FALSE))
+}
+# Diagrams sheet (schematics with no data)
+if (length(diagram_keys)) {
+  addWorksheet(wb, "Diagrams")
+  writeData(wb, "Diagrams", "Schematic diagrams (no underlying data)", startCol = 1, startRow = 1)
+  addStyle(wb, "Diagrams", ttl, rows = 1, cols = 1)
+  rr <- 3
+  for (key in diagram_keys) {
+    fg <- FIG[[key]]; fig_sheets[key] <- "Diagrams"
+    writeData(wb, "Diagrams", paste0(fg$id, ". ", fg$title), startCol = 1, startRow = rr)
+    addStyle(wb, "Diagrams", labur, rows = rr, cols = 1)
+    insertImage(wb, "Diagrams", file.path(ra_dir, fg$file),
+                width = 7.5, height = 7.5 * fg$h / fg$w, startRow = rr + 1, startCol = 1, units = "in")
+    rr <- rr + ceiling(7.5 * fg$h / fg$w * 5.2) + 3
+    contents <- rbind(contents, data.frame(Reference = fg$id, Title = fg$title,
+      Sheet = "Diagrams", Type = "Figure (schematic)", check.names = FALSE))
+  }
+}
+
+# ---- Figure index sheet -----------------------------------------------------
+addWorksheet(wb, "Figure_Index")
+fidx <- rbindlist(lapply(TR$figure_order, function(key) {
+  fg <- FIG[[key]]
+  data.table(Figure = fg$id, Title = fg$title,
+             `Image sheet` = if (!is.null(fig_sheets[key])) fig_sheets[key] else "Diagrams",
+             `Data sheet`  = if (!is.null(fg$data)) fig_sheets[key] else "(schematic — no data)")
+}))
+writeData(wb, "Figure_Index", "Figure index", startCol = 1, startRow = 1)
+addStyle(wb, "Figure_Index", ttl, rows = 1, cols = 1)
+writeData(wb, "Figure_Index", as.data.frame(fidx), startRow = 3, headerStyle = hdr,
+          borders = "all", borderColour = "#E0E0E0")
+setColWidths(wb, "Figure_Index", cols = 1:4, widths = c(12, 52, 20, 24))
+freezePane(wb, "Figure_Index", firstActiveRow = 4)
+
+# ---- Dictionary sheet -------------------------------------------------------
+addWorksheet(wb, "Dictionary")
+writeData(wb, "Dictionary", "Scenario and terminology dictionary", startCol = 1, startRow = 1)
+addStyle(wb, "Dictionary", ttl, rows = 1, cols = 1)
+writeData(wb, "Dictionary", DICT, startRow = 3, headerStyle = hdr,
+          borders = "all", borderColour = "#E0E0E0")
+setColWidths(wb, "Dictionary", cols = 1:2, widths = c(30, 110))
+addStyle(wb, "Dictionary", wrapc, rows = 4:(3 + nrow(DICT)), cols = 2, gridExpand = TRUE, stack = TRUE)
+freezePane(wb, "Dictionary", firstActiveRow = 4)
+
+# ---- Fill Contents ----------------------------------------------------------
+writeData(wb, "Contents", "Sodium Interventions Model — Technical Report workbook",
+          startCol = 1, startRow = 1); addStyle(wb, "Contents", ttl, rows = 1, cols = 1)
+writeData(wb, "Contents", paste0("Generated ", TR$meta$generated,
+  ". Deaths delayed are cardiovascular deaths delayed vs. baseline over ", WINDOW,
+  ", across ", n_pri, " countries. Values are finalised in the report; do not recompute here."),
+  startCol = 1, startRow = 2); addStyle(wb, "Contents", meta_s, rows = 2, cols = 1)
+writeData(wb, "Contents", as.data.frame(contents), startRow = 4, headerStyle = hdr,
+          borders = "all", borderColour = "#E0E0E0")
+setColWidths(wb, "Contents", cols = 1:4, widths = c(12, 62, 22, 18))
+freezePane(wb, "Contents", firstActiveRow = 5); addFilter(wb, "Contents", rows = 4, cols = 1:4)
+
+xlsx_path <- file.path(wd, "docs", "technical-report.xlsx")
+saveWorkbook(wb, xlsx_path, overwrite = TRUE)
+
+# openxlsx 4.2.8 writes a drawing/vmlDrawing relationship for EVERY worksheet but
+# only materialises the drawing XML for image sheets, leaving orphaned references
+# that make Excel prompt to repair. Strip the broken (missing-target) relationships
+# so the workbook opens cleanly. The dropped rels are unreferenced by the sheet XML.
+repair_xlsx_drawings <- function(path) {
+  resolve_part <- function(base_dir, target) {
+    parts <- unlist(strsplit(paste0(base_dir, "/", target), "/")); out <- character(0)
+    for (p in parts) { if (p == "..") out <- out[-length(out)]
+      else if (p == "." || p == "") next else out <- c(out, p) }
+    paste(out, collapse = "/")
+  }
+  tmp <- file.path(tempdir(), paste0("xlsxfix_", as.integer(runif(1, 1, 1e7))))
+  unlink(tmp, recursive = TRUE); dir.create(tmp, recursive = TRUE)
+  utils::unzip(path, exdir = tmp)
+  all_parts  <- list.files(tmp, recursive = TRUE, all.files = TRUE, no.. = TRUE)
+  exists_part <- function(p) p %in% all_parts
+  n_dropped <- 0L
+  for (rf in list.files(file.path(tmp, "xl", "worksheets", "_rels"),
+                        pattern = "[.]rels$", full.names = TRUE)) {
+    x <- paste(readLines(rf, warn = FALSE), collapse = "")
+    tags <- regmatches(x, gregexpr("<Relationship [^>]*/>", x))[[1]]
+    keep <- vapply(tags, function(tg)
+      exists_part(resolve_part("xl/worksheets", sub('.*Target="([^"]*)".*', "\\1", tg))),
+      logical(1))
+    n_dropped <- n_dropped + sum(!keep)
+    writeLines(paste0('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      paste(tags[keep], collapse = ""), '</Relationships>'), rf, sep = "")
+  }
+  ct <- file.path(tmp, "[Content_Types].xml")
+  y <- paste(readLines(ct, warn = FALSE), collapse = "")
+  for (tg in regmatches(y, gregexpr("<Override [^>]*/>", y))[[1]]) {
+    pn <- sub('.*PartName="([^"]*)".*', "\\1", tg)
+    if (!exists_part(sub("^/", "", pn))) y <- sub(tg, "", y, fixed = TRUE)
+  }
+  writeLines(y, ct, sep = "")
+  unlink(path)
+  zip::zip(zipfile = path, files = all_parts, root = tmp)
+  n_dropped
+}
+.nfix <- tryCatch(repair_xlsx_drawings(xlsx_path), error = function(e) {
+  warning("xlsx drawing repair skipped: ", conditionMessage(e)); NA_integer_ })
+cat("tr-xlsx: wrote", xlsx_path, "with", length(names(wb)), "sheets (repaired",
+    .nfix, "broken drawing rels).\n")
+```
+

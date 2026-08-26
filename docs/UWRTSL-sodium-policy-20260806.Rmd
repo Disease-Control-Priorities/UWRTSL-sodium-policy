@@ -98,69 +98,60 @@ From the **July 23** RTSL--UW modeling call, three directions were set:
      1b. MAIN CHANGES SINCE THE LAST PRESENTATION
      ====================================================================== -->
 
-# Main changes since July 23
+<!-- # Main changes since July 23 -->
 
-## 1. Fiscal policy: now an explicit tax pathway (exploratory)
-
-\justifying
-\footnotesize
-
-- **Was:** a single opaque multiplier --- a fixed effect applied to the taxed packaged share.
-- **Now:** an **explicit behavioral pathway**, $\text{tax}\to\text{price}\to\text{demand}\to\text{sodium}$, anchored on the Philippines study \autocite{saxena2025}. Base case: **`r N$fiscal_tax_rate`** tax $\times$ **`r N$fiscal_pass_through`** pass-through $=$ **`r N$fiscal_price_change`** price rise; $\times$ elasticity **`r N$fiscal_elasticity`** $\Rightarrow$ **`r N$fiscal_taxed_pkg_red`** fewer taxed products; $\times$ **`r N$fiscal_taxable_share`** taxable-packaged share $\Rightarrow$ **`r N$fiscal_pkg_red`** of packaged sodium (applied $\eta$ = `r N$eff_fiscal` on packaged).
-- **Sensitivity:** low/base/high span **`r N$fiscal_low_pkg`--`r N$fiscal_high_pkg`** of packaged sodium (full pathway table in Methods).
-
-\medskip
-\begin{alertblock}{Exploratory}
-\footnotesize
-Evidence for taxing high-sodium foods specifically is limited, and transferring price elasticities from other foods or sugar-sweetened beverages is contested. Tax rate $\ne$ sodium reduction, and \emph{not} all packaged sodium is taxable. Kept deliberately simple and transparent; the parameters are RTSL-to-confirm.
-\end{alertblock}
-
-<!-- ## 2. Behavior change / mass media: still excluded (unchanged) -->
+<!-- ## 1. Fiscal policy: now an explicit tax pathway (exploratory) -->
 
 <!-- \justifying -->
 <!-- \footnotesize -->
 
-<!-- - **Excluded from all reported scenarios** --- RTSL funds policy change, not mass media for behavior change. -->
-<!-- - **Retained** in the registry and effect-size tables ($\eta$ = `r N$eff_media` to discretionary \emph{and} packaged) so it can be re-enabled later without re-plumbing. -->
-<!-- - No change since the previous build; noted here only for completeness. -->
+<!-- - **Was:** a single opaque multiplier --- a fixed effect applied to the taxed packaged share. -->
+<!-- - **Now:** an **explicit behavioral pathway**, $\text{tax}\to\text{price}\to\text{demand}\to\text{sodium}$, anchored on the Philippines study \autocite{saxena2025}. Base case: **`r N$fiscal_tax_rate`** tax $\times$ **`r N$fiscal_pass_through`** pass-through $=$ **`r N$fiscal_price_change`** price rise; $\times$ elasticity **`r N$fiscal_elasticity`** $\Rightarrow$ **`r N$fiscal_taxed_pkg_red`** fewer taxed products; $\times$ **`r N$fiscal_taxable_share`** taxable-packaged share $\Rightarrow$ **`r N$fiscal_pkg_red`** of packaged sodium (applied $\eta$ = `r N$eff_fiscal` on packaged). -->
+<!-- - **Sensitivity:** low/base/high span **`r N$fiscal_low_pkg`--`r N$fiscal_high_pkg`** of packaged sodium (full pathway table in Methods). -->
 
-## 3. LSS: now mechanistic Na/K $\to$ SBP (primary)
+<!-- \medskip -->
+<!-- \begin{alertblock}{Exploratory} -->
+<!-- \footnotesize -->
+<!-- Evidence for taxing high-sodium foods specifically is limited, and transferring price elasticities from other foods or sugar-sweetened beverages is contested. Tax rate $\ne$ sodium reduction, and \emph{not} all packaged sodium is taxable. Kept deliberately simple and transparent; the parameters are RTSL-to-confirm. -->
+<!-- \end{alertblock} -->
 
-\justifying
-\footnotesize
+<!-- <!-- ## 2. Behavior change / mass media: still excluded (unchanged) --> -->
 
-- **Was:** the **SSaSS trial relative risks** applied directly (stroke-only; also lowered stroke case fatality) --- flagged at July 23 as inconsistent for the general population.
-- **Now:** a mechanistic **sodium + potassium $\to$ SBP $\to$ CVD** model (`r N$lss_ratio` substitute). The displaced discretionary sodium **and** the added potassium both lower SBP, which drives **all four CVD causes** via the existing SBP machinery; **case fatality is unchanged** (as for the other sodium$\to$SBP policies).
-- **Three scenarios:** whole-population (s2, coverage `r N$lss_cov_all`), **diagnosed HTN** (s4, `r N$htn_dx_pop` of adults), **treated HTN** (s5, `r N$htn_tx_pop`) --- s4/s5 sized by **NCD-RisC `r N$htn_source_year`** eligibility, replacing the old BP$\ge$140 proxy.
-- **SSaSS trial RRs** are retained only as a **benchmark** for s4/s5 --- \emph{never combined} with the Na/K model.
+<!-- <!-- \justifying --> -->
+<!-- <!-- \footnotesize --> -->
 
-\medskip
-\footnotesize Benefit-only --- no CKD / hyperkalaemia harm channel (unlike Huang et al.\ 2026). Full pathway and the Huang comparison are in Methods.
+<!-- <!-- - **Excluded from all reported scenarios** --- RTSL funds policy change, not mass media for behavior change. --> -->
+<!-- <!-- - **Retained** in the registry and effect-size tables ($\eta$ = `r N$eff_media` to discretionary \emph{and} packaged) so it can be re-enabled later without re-plumbing. --> -->
+<!-- <!-- - No change since the previous build; noted here only for completeness. --> -->
 
-## 4. Packaged food: country-specific Euromonitor trend
+<!-- ## 3. LSS: now mechanistic Na/K $\to$ SBP (primary) -->
 
-\justifying
-\footnotesize
+<!-- \justifying -->
+<!-- \footnotesize -->
 
-- **Was:** a single global packaged-growth assumption ($\sim$2.6\%/yr) applied to every country.
-- **Now:** **country-specific** Euromonitor 2025--2030 predictions --- one pre-combined per-country growth rate with a 95\% CI (median $\approx$**`r N$pkg_apc_median`**/yr, range `r N$pkg_apc_range`) --- grown to a 2030 end-state, held flat after, capped at a **`r N$euro_ceiling`** ceiling.
-- **Composition shift only** --- total sodium intake is unchanged; the other four sources renormalise each year. Source: Euromonitor (Marklund, v002).
+<!-- - **Was:** the **SSaSS trial relative risks** applied directly (stroke-only; also lowered stroke case fatality) --- flagged at July 23 as inconsistent for the general population. -->
+<!-- - **Now:** a mechanistic **sodium + potassium $\to$ SBP $\to$ CVD** model (`r N$lss_ratio` substitute). The displaced discretionary sodium **and** the added potassium both lower SBP, which drives **all four CVD causes** via the existing SBP machinery; **case fatality is unchanged** (as for the other sodium$\to$SBP policies). -->
+<!-- - **Three scenarios:** whole-population (s2, coverage `r N$lss_cov_all`), **diagnosed HTN** (s4, `r N$htn_dx_pop` of adults), **treated HTN** (s5, `r N$htn_tx_pop`) --- s4/s5 sized by **NCD-RisC `r N$htn_source_year`** eligibility, replacing the old BP$\ge$140 proxy. -->
+<!-- - **SSaSS trial RRs** are retained only as a **benchmark** for s4/s5 --- \emph{never combined} with the Na/K model. -->
 
-\medskip
-\begin{alertblock}{Open items (July 23)}
-\footnotesize
-Whether to keep rice/pasta/noodle categories (low-sodium staples could dilute the trend), and what ``max'' packaged share to cap at (Matti used 50\% for India; the model currently caps at `r N$euro_ceiling`). And should packaged growth raise \emph{total} sodium --- and hence baseline CVD --- or only shift composition, as now?
-\end{alertblock}
+<!-- \medskip -->
+<!-- \footnotesize Benefit-only --- no CKD / hyperkalaemia harm channel (unlike Huang et al.\ 2026). Full pathway and the Huang comparison are in Methods. -->
 
-## 4. Packaged share of sodium over time
+<!-- ## 4. Packaged food: country-specific Euromonitor trend -->
 
-\footnotesize
+<!-- \justifying -->
+<!-- \footnotesize -->
 
-Each country's packaged share grows on its own Euromonitor trend to a 2030 end-state, then holds flat (dashed line $=$ the `r N$euro_ceiling` ceiling). The other four sources renormalise each year --- a composition shift only.
+<!-- - **Was:** a single global packaged-growth assumption ($\sim$2.6\%/yr) applied to every country. -->
+<!-- - **Now:** **country-specific** Euromonitor 2025--2030 predictions --- one pre-combined per-country growth rate with a 95\% CI (median $\approx$**`r N$pkg_apc_median`**/yr, range `r N$pkg_apc_range`) --- grown to a 2030 end-state, held flat after, capped at a **`r N$euro_ceiling`** ceiling. -->
+<!-- - **Composition shift only** --- total sodium intake is unchanged; the other four sources renormalise each year. Source: Euromonitor (Marklund, v002). -->
 
-```{r fig-packaged-time, out.width="80%"}
-knitr::include_graphics(fig("packaged_time"))
-```
+<!-- \medskip -->
+<!-- \begin{alertblock}{Open items (July 23)} -->
+<!-- \footnotesize -->
+<!-- Whether to keep rice/pasta/noodle categories (low-sodium staples could dilute the trend), and what ``max'' packaged share to cap at (Matti used 50\% for India; the model currently caps at `r N$euro_ceiling`). And should packaged growth raise \emph{total} sodium --- and hence baseline CVD --- or only shift composition, as now? -->
+<!-- \end{alertblock} -->
+
 
 
 <!-- ## 5. Public procurement: adults-only share still provisional -->
@@ -299,6 +290,16 @@ knitr::include_graphics(fig("packaged_time"))
      ====================================================================== -->
 
 # Methods
+
+## Packaged share of sodium over time
+
+\footnotesize
+
+Each country's packaged share grows on its own Euromonitor trend to a 2030 end-state, then holds flat (dashed line $=$ the `r N$euro_ceiling` ceiling). The other four sources renormalise each year --- a composition shift only.
+
+```{r fig-packaged-time, out.width="80%"}
+knitr::include_graphics(fig("packaged_time"))
+```
 
 <!-- ## The source-split approach: from sources to $\eta$ -->
 
@@ -887,6 +888,79 @@ RTSL funds \textbf{policy change, not mass media for behavior change} (Laura). K
 - \textbf{K channel:} K added stoichiometrically $\to$ excretion (`r N$lss_k_mg_per_mmol` mg/mmol; $\div$`r N$lss_k_intake_excr`) $\to$ Filippini U-curve \autocite{Filippini2020}; baseline-Na modulated; $\times$`r N$lss_nonhtn_factor` in normotensives. Baseline K: Reddin 2023 \autocite{Reddin2023}. Mean $\Delta$SBP (s2) `r N$lss_dsbp_tot` mmHg ($=$ `r N$lss_dsbp_na` Na $+$ `r N$lss_dsbp_k` K).
 - \textbf{Scenarios:} s2 whole population (`r N$lss_cov_all`); s4 diagnosed HTN (`r N$htn_dx_pop`); s5 treated HTN (`r N$htn_tx_pop`) --- s4/s5 from NCD-RisC `r N$htn_source_year`; aligned with Huang et al.\ scenarios 2/4/5 \autocite{huang2026}.
 - \textbf{SSaSS benchmark (s4/s5 only):} stroke incidence RR `r N$lss_rr_stroke_inc` and a conditional case-fatality multiplier `r N$lss_cf_mult` \autocite{Neal2021LSSTrial}; a separate pathway, never combined with Na/K.
+
+## LSS model: parameters, reference values, and sources
+
+\tiny
+
+\[
+\Delta SBP^{LSS}
+=
+\Delta SBP^{Na}
++
+\lambda_K\Delta SBP^{K},
+\qquad
+\Delta Na
+=
+Na_0\,s_D\,q_{KCl}\,a\,u\,c
+\]
+
+\begin{columns}[T]
+
+\begin{column}{0.50\textwidth}
+
+\textbf{LSS composition, exposure, and sodium pathway}
+
+\begin{tabular}{p{0.09\linewidth} p{0.46\linewidth} p{0.17\linewidth} p{0.20\linewidth}}
+\hline
+\textbf{Term} & \textbf{Definition} & \textbf{Value} & \textbf{Source}\\
+\hline
+$Na_0$ & Baseline sodium intake & Country-specific, g/d & Model input\\
+$s_D$ & Share of sodium from discretionary salt & Country/year-specific & Sodium-source data\\
+$q_{NaCl}$ & NaCl mass fraction of LSS & 0.75 & SSaSS \autocite{Neal2021LSSTrial}\\
+$q_{KCl}$ & KCl mass fraction of LSS & 0.25 & SSaSS \autocite{Neal2021LSSTrial}\\
+$u$ & Uptake among reached population & 1.00 & Assumption\\
+$a$ & Adherence: fraction of salt use replaced by LSS & 0.92 & SSaSS yr-5 use \autocite{Neal2021LSSTrial}\\
+$c$ & Population coverage / eligibility & s2: 0.50; s4/s5: country-sex specific & s2 assumption; s4/s5 NCD-RisC 2019\\
+$\eta_{LSS}$ & Fraction of discretionary Na displaced, $q_{KCl}au$ & $0.25\times0.92\times1=0.23$ & Derived\\
+$\beta_{Na}$ & SBP reduction per g/d Na reduction & 2.8 raised BP; 1.0 normal BP & Filippini \autocite{Filippini2021}\\
+$Na_{\min}$ & Minimum sodium intake allowed & 2 g/d & WHO/model constraint\\
+\hline
+\end{tabular}
+
+\end{column}
+
+\begin{column}{0.49\textwidth}
+
+\textbf{Potassium pathway and combination}
+
+\begin{tabular}{p{0.10\linewidth} p{0.43\linewidth} p{0.19\linewidth} p{0.20\linewidth}}
+\hline
+\textbf{Term} & \textbf{Definition} & \textbf{Value} & \textbf{Source}\\
+\hline
+$K_0$ & Baseline potassium intake & Country-sex specific & Reddin 2023 \autocite{Reddin2023}\\
+$M_K$ & Potassium mass per mmol & 39.1 mg/mmol & Molecular mass\\
+$\rho_K$ & Intake-to-24h urinary excretion ratio & 1.3 & Filippini \autocite{Filippini2020}\\
+$r_{Na}$ & Na mass per g NaCl & $22.99/58.44=0.393$ & Stoichiometry\\
+$r_K$ & K mass per g KCl & $39.10/74.55=0.524$ & Stoichiometry\\
+$f_K(x)$ & Achieved K excretion $\to$ SBP curve & U-shaped; ref. 90 mmol/d & Filippini \autocite{Filippini2020}\\
+$m_{Na}$ & Modification of K effect by baseline Na & 0.8 / 1.0 / 1.2 & Filippini/Huang-based assumption\\
+$\gamma_N$ & K-effect multiplier in normotensive BP bins & 0.50 & Assumption\\
+$\lambda_K$ & Weight on K-mediated SBP effect & 1.00 & Additivity assumption\\
+$RR_{10,c}$ & CVD RR per 10-mmHg SBP reduction, cause $c$ & Cause-specific & Ettehad \autocite{ettehad2016}\\
+\hline
+\end{tabular}
+
+\end{column}
+\end{columns}
+
+<!-- \vspace{0.25em} -->
+<!-- \tiny -->
+<!-- \textit{Implementation details:} -->
+<!-- $f_K(x)$ is piecewise-linear through $(30,9.1),(60,3.9),(90,0),(120,-0.9),(150,-0.2),(180,0.7)$ -->
+<!-- (mmol/d, mmHg). $m_{Na}=0.8$ for $Na_0<3$, $1.0$ for 3--$<5$, and $1.2$ for $\geq5$ g/d. -->
+<!-- Na- and K-mediated SBP reductions are added and passed through the same cause-specific SBP$\to$CVD incidence model. -->
+<!-- Case fatality is unchanged; CKD/hyperkalaemia harms are not currently modeled \autocite{huang2026}. -->
 
 ## D. Front-of-pack labeling
 

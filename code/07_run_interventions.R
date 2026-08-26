@@ -94,6 +94,15 @@ SCALEUP_YEAR2 <- 2030
 # Task 1d replaces them with NCD-RisC country x sex POPULATION eligibility
 # (diagnosed_pop / treated_pop), resolved per country in run_multiple_scenarios.
 LSS_COVERAGE_ALL  <- 0.50   # whole-population uptake for scenario 2 (RTSL to confirm)
+# Scenario-2 (whole-population) coverage/uptake sweep requested by RTSL: run the
+# whole-population LSS scenario at each of these POPULATION-reach levels, each a
+# distinct scenario lss_s2_<pct> (lss_s2_10 ... lss_s2_50). NB these are
+# population-level reach/coverage variants -- they are NOT the product uptake
+# among reached users, the adherence fraction, or the KCl substitution ratio
+# (those remain LSS_UPTAKE / LSS_ADHERENCE / LSS_KCL_FRACTION and are unchanged;
+# see the na_k_sbp composition below). LSS_COVERAGE_ALL is retained as the single
+# default coverage used anywhere one representative s2 value is needed.
+LSS_S2_COVERAGE_LEVELS <- c(0.10, 0.20, 0.30, 0.40, 0.50)
 # DEPRECATED (Task 1d): retained only for reference / a manual override. The
 # s4/s5 coverage now comes from htn_eligibility, NOT these constants.
 HTN_DIAGNOSED_COV <- 0.33   # [deprecated] old HEARTS diagnosed placeholder
@@ -737,6 +746,8 @@ build_scenario_configs <- function(selected_interventions,
                                    lss_method                = get0("LSS_METHOD", envir = .GlobalEnv, ifnotfound = "na_k_sbp"),
                                    lss_benchmark_ssass       = get0("LSS_BENCHMARK_SSASS", envir = .GlobalEnv, ifnotfound = FALSE),
                                    lss_coverage_all          = get0("LSS_COVERAGE_ALL", envir = .GlobalEnv, ifnotfound = 0.50),
+                                   lss_s2_coverage_levels    = get0("LSS_S2_COVERAGE_LEVELS", envir = .GlobalEnv,
+                                                                    ifnotfound = c(0.10, 0.20, 0.30, 0.40, 0.50)),
                                    fiscal_sensitivity        = get0("FISCAL_SENSITIVITY", envir = .GlobalEnv, ifnotfound = NULL),
                                    include_fiscal_in_package = get0("include_fiscal_in_package", envir = .GlobalEnv, ifnotfound = TRUE)) {
   scenario_mode <- match.arg(scenario_mode)
@@ -772,9 +783,10 @@ build_scenario_configs <- function(selected_interventions,
   # LSS reach -> NCD-RisC eligibility column (Task 1d). NA => scenario-2 whole-
   # population coverage (lss_coverage_all); the *_pop columns are resolved per
   # country x sex in run_multiple_scenarios (NOT here). No BP>=140 proxy.
+  # s4/s5 reach defs (NCD-RisC eligibility). Scenario 2 (reach = "all") is emitted
+  # separately below, once per whole-population coverage level in
+  # lss_s2_coverage_levels, so the s2 uptake sweep is explicit in the registry.
   lss_reach_defs <- list(
-    lss_s2 = list(reach = "all",           eligibility = NA_character_,
-                  cov = lss_coverage_all,  lab = "whole-population discretionary"),
     lss_s4 = list(reach = "htn_diagnosed", eligibility = "diagnosed_pop",
                   cov = NA_real_,          lab = "diagnosed hypertension"),
     lss_s5 = list(reach = "htn_treated",   eligibility = "treated_pop",
@@ -806,7 +818,17 @@ build_scenario_configs <- function(selected_interventions,
   if (scenario_mode %in% c("individual", "both")) {
     for (nm in selected) {
       if (nm == "lss") {
-        # PRIMARY method for s2/s4/s5 (Task 1b/1c). Distinct scenario names when a
+        # PRIMARY method (Task 1b/1c). Scenario 2 = whole-population discretionary
+        # LSS, emitted once per requested coverage level as lss_s2_<pct> so the
+        # population-uptake sweep (10-50%) is explicit and discoverable.
+        for (cvl in lss_s2_coverage_levels) {
+          pct <- round(cvl * 100)
+          add_lss(sprintf("lss_s2_%02d", pct),
+                  list(reach = "all", eligibility = NA_character_, cov = cvl,
+                       lab = sprintf("whole-population discretionary, %d%% coverage", pct)),
+                  lss_method)
+        }
+        # Scenarios 4/5 (diagnosed/treated HTN). Distinct scenario names when a
         # benchmark is also emitted so the two methods never merge.
         for (vnm in names(lss_reach_defs)) add_lss(vnm, lss_reach_defs[[vnm]], lss_method)
         # SSaSS trial-RR BENCHMARK (Task 1c): distinct s4/s5 scenarios, only when
@@ -842,16 +864,39 @@ build_scenario_configs <- function(selected_interventions,
       pkg <- setdiff(pkg, registry[placeholder == TRUE, intervention])
       pkg <- defined[defined %in% pkg]  # re-impose canonical order
     }
-    # Task 2c: fiscal membership in the package is a config value. Uses the BASE
-    # 'fiscal' effect (not the sensitivity variants).
-    if (!isTRUE(include_fiscal_in_package)) pkg <- setdiff(pkg, "fiscal")
-    if (length(pkg) > 0L) {
+    pkg_nonfiscal <- setdiff(pkg, "fiscal")  # public_procurement + fopl + salt_targets
+    if (!isTRUE(include_fiscal_in_package)) {
+      # Fiscal excluded: a single package of the non-fiscal policies.
+      if (length(pkg_nonfiscal) > 0L) {
+        configs$full_package <- list(
+          interventions = pkg_nonfiscal, saltyear1 = saltyear1, saltyear2 = saltyear2,
+          label = paste0("Full package (", paste(pkg_nonfiscal, collapse = " + "), ")"))
+      }
+    } else if (!is.null(fiscal_sensitivity) && "fiscal" %in% pkg) {
+      # Task (client Table 1 "Total 1/2/3"): one package total per fiscal
+      # sensitivity variant. The base 'full_package' keeps the plain 'fiscal'
+      # effect (identical to fiscal_base) for backward-compatibility; the low/high
+      # packages swap in the fiscal_low / fiscal_high effect. Package totals are
+      # genuine model runs (deaths delayed is non-additive), never composed by hand.
+      pkg_variants <- c(full_package_low  = "fiscal_low",
+                        full_package      = "fiscal",
+                        full_package_high = "fiscal_high")
+      for (pname in names(pkg_variants)) {
+        fv  <- pkg_variants[[pname]]
+        ivs <- c(pkg_nonfiscal, fv)
+        vlab <- if (pname == "full_package") "base"
+                else sub("^full_package_", "", pname)
+        configs[[pname]] <- list(
+          interventions = ivs, saltyear1 = saltyear1, saltyear2 = saltyear2,
+          label = if (pname == "full_package")
+            paste0("Full package (", paste(c(pkg_nonfiscal, "fiscal"), collapse = " + "), ")")
+          else paste0("Full package — ", vlab, " fiscal variant"))
+      }
+    } else if (length(pkg) > 0L) {
+      # Fiscal in package but no sensitivity set: single base package.
       configs$full_package <- list(
-        interventions = pkg,
-        saltyear1     = saltyear1,
-        saltyear2     = saltyear2,
-        label         = paste0("Full package (", paste(pkg, collapse = " + "), ")")
-      )
+        interventions = pkg, saltyear1 = saltyear1, saltyear2 = saltyear2,
+        label = paste0("Full package (", paste(pkg, collapse = " + "), ")"))
     }
   }
 
@@ -944,6 +989,7 @@ scenario_configs <- build_scenario_configs(
   lss_method                      = LSS_METHOD,
   lss_benchmark_ssass             = LSS_BENCHMARK_SSASS,
   lss_coverage_all                = LSS_COVERAGE_ALL,
+  lss_s2_coverage_levels          = LSS_S2_COVERAGE_LEVELS,
   fiscal_sensitivity              = FISCAL_SENSITIVITY,
   include_fiscal_in_package       = include_fiscal_in_package
 )
@@ -1985,7 +2031,10 @@ run_multiple_scenarios <- function(
         stop("NCD-RisC eligibility (", cfg$lss_eligibility, ") missing for ", Country)
       }
       s_lss_coverage <- he
-    } else if (identical(s_lss_reach, "all")) {
+    } else if (identical(s_lss_reach, "all") && is.null(cfg$lss_coverage)) {
+      # Whole-population reach with no explicit per-scenario coverage: fall back to
+      # the single default. The lss_s2_<pct> variants DO carry cfg$lss_coverage, so
+      # each keeps its own population-coverage level here.
       s_lss_coverage <- lss_coverage_all
     }
 
@@ -2237,9 +2286,15 @@ scenario_registry <- rbindlist(lapply(names(scenario_configs), function(nm) {
     interventions   = if (length(ivs) == 0L) "" else paste(ivs, collapse = " + "),
     is_lss          = identical(.nn(c$interventions, ""), "lss"),
     is_fiscal       = grepl("^fiscal", nm),
+    is_package      = grepl("^full_package", nm),
     lss_method      = .nn(c$lss_method),
     lss_reach       = .nn(c$lss_reach),
-    lss_eligibility = .nn(c$lss_eligibility))
+    lss_eligibility = .nn(c$lss_eligibility),
+    # Scalar whole-population coverage for the lss_s2_<pct> variants (NA for s4/s5,
+    # whose coverage is the per-country x sex NCD-RisC eligibility, and for non-LSS
+    # scenarios). Lets the report build the Scenario-2 uptake sweep dynamically.
+    lss_coverage    = if (is.null(c$lss_coverage) || is.data.frame(c$lss_coverage))
+                        NA_real_ else as.numeric(c$lss_coverage))
 }))
 run_config <- list(
   note        = "Written by 07_run_interventions.R; read by report.RMD. Do not re-guess these.",
@@ -2249,7 +2304,7 @@ run_config <- list(
     uptake = LSS_UPTAKE, adherence = LSS_ADHERENCE,
     additive = LSS_NAK_ADDITIVE, additivity_factor = LSS_ADDITIVITY_FACTOR,
     nonhtn_attenuation = LSS_K_NONHTN_ATTENUATION, nonhtn_factor = LSS_K_NONHTN_FACTOR,
-    coverage_all = LSS_COVERAGE_ALL,
+    coverage_all = LSS_COVERAGE_ALL, s2_coverage_levels = LSS_S2_COVERAGE_LEVELS,
     k_mg_per_mmol = K_MG_PER_MMOL, k_intake_to_excretion = K_INTAKE_TO_EXCRETION,
     na_per_g_nacl = NA_PER_G_NACL, k_per_g_kcl = K_PER_G_KCL,
     k_sbp_anchors = LSS_K_SBP_ANCHORS, k_na_modulation = LSS_K_NA_MODULATION,
