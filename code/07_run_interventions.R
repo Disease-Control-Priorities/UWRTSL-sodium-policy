@@ -135,7 +135,10 @@ HTN_SOURCE_YEAR      <- get0("HTN_SOURCE_YEAR", ifnotfound = 2019)  # NCD-RisC y
 # LSS_METHOD selects the PRIMARY pathway for the LSS scenarios (s2/s4/s5):
 #   "na_k_sbp"       (default/primary) mechanistic sodium + potassium -> SBP,
 #                    following the Huang et al. 2026 LSS structure and using the
-#                    Filippini 2020 K->SBP achieved-excretion dose-response.
+#                    Filippini 2020 Figure 2 CHANGE-in-urinary-K K->SBP dose-
+#                    response with the Figure S16 baseline urinary-K subgroup
+#                    modifier (potassium submethod
+#                    "filippini_fig2_delta_uk_baseline_uk_modifier").
 #                    BENEFIT-ONLY: this disease model has NO CKD/hyperkalaemia
 #                    channel, so LSS harms are NOT modelled (unlike Huang) -- this
 #                    is recorded in lss_audit and flagged in report limitations.
@@ -170,39 +173,55 @@ LSS_ADHERENCE <- 0.92
 LSS_NAK_ADDITIVE      <- TRUE   # TRUE = combine Na- and K-dSBP additively; FALSE = Na only
 LSS_ADDITIVITY_FACTOR <- 1.00   # Huang "100% -> 80%" sensitivity is a one-line change here
 
-# Potassium channel: attenuate (or zero) the K->SBP effect in NON-hypertensives.
-# Filippini: BP-lowering from K is stronger in hypertensives (and the BP increase
-# at high K excretion was seen in drug-treated, not untreated, HTN). This is
-# physiological EFFECT-MODIFICATION by BP level, NOT the removed BP>=140 dx/tx
-# reach proxy. Set FACTOR to 0 for "no K effect in non-hypertensives".
-LSS_K_NONHTN_ATTENUATION <- TRUE
-LSS_K_NONHTN_FACTOR      <- 0.50   # multiply K-dSBP by this in normotensive (<140) bins
+# UPDATED vs previous implementation (baseline-potassium heterogeneity, 2026-08):
+# the previous primary K->SBP pathway used a Filippini FIGURE 3 achieved-excretion
+# U-curve DIFFERENCED at baseline vs post-LSS excretion, then scaled by baseline-
+# SODIUM bands (LSS_K_NA_MODULATION) and attenuated in normotensives
+# (LSS_K_NONHTN_FACTOR). All three of those modifiers are RETIRED from the primary
+# pathway. The K effect is now the Filippini FIGURE 2 CHANGE-IN-URINARY-K dose-
+# response, modified ONLY by the Filippini FIGURE S16 baseline urinary-K subgroup
+# (<75 vs >=75 mmol/day). Stacking the retired modifiers on top would introduce
+# multiplicative interactions Filippini never jointly estimated (double-counting),
+# so LSS_K_NONHTN_*, LSS_K_NA_MODULATION and the Fig-3 curve are deleted, not
+# merely disabled. run_config records previous_modifiers_active = FALSE.
 
 # Unit conversions (Filippini 2020 conventions; both exposed for RTSL to swap).
+# The 1.3 intake:excretion factor is applied ONLY to convert a DIETARY potassium
+# value (g/day -- the Reddin baseline intake and the KCl-added potassium) into 24h
+# urinary excretion. It must NEVER be applied to a value that is already urinary.
 K_MG_PER_MMOL         <- 39.1  # potassium molar mass (mg per mmol); 1200 mg ~= 30 mmol
 K_INTAKE_TO_EXCRETION <- 1.3   # dietary K intake ~= 1.3 x 24h urinary excretion
-                               # => achieved excretion (mmol/d) = intake_mmol / 1.3
+                               # => urinary excretion (mmol/d) = intake_mmol / 1.3
 # Stoichiometry for K added when NaCl mass is replaced 1:1 by KCl mass in the LSS.
 NA_PER_G_NACL <- 22.99 / 58.44  # g sodium per g NaCl   (~0.393)
 K_PER_G_KCL   <- 39.10 / 74.55  # g potassium per g KCl (~0.524)
 # => per gram of sodium removed, K added (g) = NA_removed * (K_PER_G_KCL/NA_PER_G_NACL) ~= 1.33 g
 
-# Filippini (2020) "achieved potassium excretion" -> SBP change (mmHg), U-shaped,
-# reference 90 mmol/day (= 0). Stored as a SWAPPABLE named table; evaluated by
-# piecewise-linear interpolation at baseline vs post-LSS excretion and DIFFERENCED.
-LSS_K_SBP_ANCHORS <- data.table(
-  excretion_mmol = c( 30,  60,  90, 120, 150, 180),
-  sbp_mmhg       = c(9.1, 3.9, 0.0,-0.9,-0.2, 0.7)
+# Filippini (2020) FIGURE 2: CHANGE in 24h urinary potassium (mmol/day) ->
+# treated-minus-control SBP difference (mmHg). NEGATIVE sbp_change = SBP LOWERING.
+# These are the PUBLISHED anchors (no artificial 80 mmol point); a SWAPPABLE named
+# table. Piecewise-linear interpolation implies an approximate zero-crossing at
+#   60 + 30 * (2.0 / (2.0 + 1.1)) ~= 79.4 mmol/day
+# (increasing benefit to ~30 mmol/day, diminishing thereafter, and a possible
+# ADVERSE SBP response above ~79-80 mmol/day). High-dose estimates are imprecise;
+# the primary analysis does NOT truncate the adverse arm to zero -- it is flagged.
+LSS_K_DELTA_SBP_ANCHORS <- data.table(
+  delta_uk_mmol   = c(0,  30,   60,  90,  120),
+  sbp_change_mmhg = c(0, -3.3, -2.0, 1.1, 4.2)
 )
+LSS_K_DELTA_UK_ZERO_CROSSING <- 60 + 30 * (2.0 / (2.0 + 1.1))  # ~= 79.4 mmol/day
 
-# Baseline-SODIUM modulation of the K->SBP effect (Filippini/Huang: stronger at
-# higher sodium). Multiplier on K-dSBP by the country's baseline sodium band
-# (g/day). Default 1.0 (un-stratified curve) if a band is missing -> conservative.
-LSS_K_NA_MODULATION <- data.table(
-  na_lo = c(0,   3,   5),      # g sodium/day lower bound (inclusive)
-  na_hi = c(3,   5, Inf),      # upper bound (exclusive)
-  mult  = c(0.8, 1.0, 1.2)     # <3g attenuated, 3-5g reference, >5g amplified
-)
+# Filippini (2020) FIGURE S16: pooled treated-minus-control SBP by BASELINE 24h
+# urinary potassium subgroup. The Figure 2 curve is the population-AVERAGE
+# relationship, so the subgroup effects are NORMALISED to the overall estimate to
+# give a multiplier m_K(uK0) that preserves that average curve:
+#   uK0 <  75 mmol/day (LOWER baseline K):  4.31 / 3.90 = 1.1051 (LARGER effect)
+#   uK0 >= 75 mmol/day (HIGHER baseline K): 3.21 / 3.90 = 0.8231 (SMALLER, NOT zero)
+# 75 mmol/day urinary ~= 2.93 g/day urinary ~= 3.81 g/day DIETARY (x1.3).
+LSS_K_BASELINE_UK_THRESHOLD <- 75   # mmol/day 24h urinary K subgroup split (Fig S16)
+LSS_K_SUBGROUP_SBP <- c(low = -4.31, high = -3.21, overall = -3.90)  # mmHg (Fig S16)
+LSS_K_BASELINE_MULT_LOW  <- LSS_K_SUBGROUP_SBP[["low"]]  / LSS_K_SUBGROUP_SBP[["overall"]]  # 1.1051
+LSS_K_BASELINE_MULT_HIGH <- LSS_K_SUBGROUP_SBP[["high"]] / LSS_K_SUBGROUP_SBP[["overall"]]  # 0.8231
 
 ###############################################################################
 # SECTION 0c: Fiscal + Euromonitor controls (Tasks 2 & 3)----
@@ -922,26 +941,49 @@ baseline_potassium <- build_baseline_potassium(
   wd_raw, wd_data, name_map,
   required_locations = PRIORITY_COUNTRIES, write = TRUE)
 
-#' K->SBP interpolator on achieved potassium excretion (mmol/day), from the
-#' Filippini (2020) U-shaped anchors. Piecewise-linear with constant
-#' extrapolation beyond the anchor range (rule = 2). Returns the SBP offset
-#' (mmHg) vs the 90 mmol reference; DIFFERENCE two evaluations for a dSBP.
-k_excretion_to_sbp <- function(excr_mmol, anchors = LSS_K_SBP_ANCHORS) {
-  stats::approx(x = anchors$excretion_mmol, y = anchors$sbp_mmhg,
-                xout = excr_mmol, method = "linear", rule = 2)$y
+#' Potassium-mediated SBP reduction from Filippini (2020) FIGURE 2: the CHANGE in
+#' 24h urinary potassium (mmol/day) -> SBP reduction (mmHg). The anchors store the
+#' treated-minus-control SBP difference (negative = SBP lowering); this returns a
+#' POSITIVE SBP reduction (the model's sign convention), so a negative return =
+#' an adverse SBP increase at high delta uK. Piecewise-linear, constant
+#' extrapolation beyond the anchor range (rule = 2).
+# UPDATED vs previous implementation: replaces k_excretion_to_sbp(), which
+# interpolated the Fig-3 ACHIEVED-excretion U-curve and was DIFFERENCED at
+# baseline vs post-LSS excretion.
+k_delta_to_sbp_reduction <- function(delta_uk_mmol,
+                                     anchors = LSS_K_DELTA_SBP_ANCHORS) {
+  -stats::approx(x = anchors$delta_uk_mmol, y = anchors$sbp_change_mmhg,
+                 xout = delta_uk_mmol, method = "linear", rule = 2)$y
+}
+
+#' Filippini (2020) FIGURE S16 baseline urinary-K subgroup multiplier m_K(uK0):
+#' larger below the threshold (potassium-deficient), smaller at/above it
+#' (potassium-replete). Vectorised over uK0. Scalar defaults = the same global
+#' constants the model uses, so the audit and the model share one helper.
+k_baseline_uk_multiplier <- function(uk0_mmol,
+                                     threshold = LSS_K_BASELINE_UK_THRESHOLD,
+                                     mult_low  = LSS_K_BASELINE_MULT_LOW,
+                                     mult_high = LSS_K_BASELINE_MULT_HIGH) {
+  ifelse(uk0_mmol < threshold, mult_low, mult_high)
 }
 
 # Bundle the LSS Na/K mechanistic parameters so a SINGLE clusterExport reaches
 # every worker. Per-scenario method/reach/coverage are NOT here -- they travel
 # with the scenario config.
+# UPDATED vs previous implementation: k_sbp_anchors/k_na_modulation/nonhtn_* are
+# gone; the K channel now carries the Fig-2 delta-uK anchors + the Fig-S16
+# baseline-uK threshold and subgroup multipliers.
 LSS_PARAMS <- list(
   nacl_fraction       = LSS_NACL_FRACTION,   kcl_fraction        = LSS_KCL_FRACTION,
   uptake              = LSS_UPTAKE,          adherence           = LSS_ADHERENCE,
   additive            = LSS_NAK_ADDITIVE,    additivity_factor   = LSS_ADDITIVITY_FACTOR,
-  nonhtn_attenuation  = LSS_K_NONHTN_ATTENUATION, nonhtn_factor  = LSS_K_NONHTN_FACTOR,
   mg_per_mmol         = K_MG_PER_MMOL,       intake_to_excretion = K_INTAKE_TO_EXCRETION,
   na_per_g_nacl       = NA_PER_G_NACL,       k_per_g_kcl         = K_PER_G_KCL,
-  k_sbp_anchors       = LSS_K_SBP_ANCHORS,   k_na_modulation     = LSS_K_NA_MODULATION
+  k_delta_sbp_anchors = LSS_K_DELTA_SBP_ANCHORS,
+  baseline_uk_threshold = LSS_K_BASELINE_UK_THRESHOLD,
+  baseline_uk_mult_low  = LSS_K_BASELINE_MULT_LOW,
+  baseline_uk_mult_high = LSS_K_BASELINE_MULT_HIGH,
+  delta_uk_zero_crossing = LSS_K_DELTA_UK_ZERO_CROSSING
 )
 
 # --- Task 5: adults-only public-procurement guard (fail loudly on stale 5%) ---
@@ -1526,7 +1568,9 @@ calculate_sodium_impact_etihad <- function(
   lss_reach    <- attr(salteff, "lss_reach")
   lss_coverage <- attr(salteff, "lss_coverage")
   lss_method   <- attr(salteff, "lss_method")
-  hypertensive_bins <- c("140-149", "150-159", "160-169", "170-179", "180+")
+  # UPDATED vs previous implementation: hypertensive_bins was only used for the
+  # retired non-HTN K attenuation; the Fig-2/Fig-S16 K channel no longer stratifies
+  # by BP bin, so it is dropped here.
   if (!is.null(lss_reach) && lss_reach != "none") {
     if (is.data.table(lss_coverage)) {
       dt_baseline <- merge(dt_baseline, lss_coverage[, .(sex, .cov = cov)],
@@ -1604,10 +1648,14 @@ calculate_sodium_impact_etihad <- function(
   # channel exists in this disease model (unlike Huang et al.). K added is
   # stoichiometric to the sodium displaced (salt_reduction already carries reach x
   # coverage x ramp x WHO-floor), so the two channels stay consistent.
-  # NB: the BP-bin incidence decomposition is now consistent for every cause
-  # (calculate_baseline_incidence_gbd asserts sum_b prob * IR_bin = IR), so the
-  # former hstroke IR-decomposition quirk that inflated all sodium->SBP
-  # scenarios no longer applies here.
+  #
+  # UPDATED vs previous implementation: the previous version evaluated the
+  # Filippini FIGURE 3 ACHIEVED-excretion U-curve at baseline and post-LSS
+  # excretion and DIFFERENCED them, then scaled by baseline-SODIUM bands and a
+  # non-hypertensive attenuation factor. This primary version uses the Filippini
+  # FIGURE 2 CHANGE-IN-URINARY-K dose-response (k_delta_to_sbp_reduction) modified
+  # ONLY by the Filippini FIGURE S16 baseline urinary-K subgroup multiplier
+  # (k_baseline_uk_multiplier); the baseline-Na and non-HTN modifiers are retired.
   apply_na_k <- !is.null(lss_method) && lss_method == "na_k_sbp" &&
                 !is.null(lss_reach)  && lss_reach != "none"
   if (apply_na_k) {
@@ -1621,35 +1669,44 @@ calculate_sodium_impact_etihad <- function(
     dt_baseline <- merge(dt_baseline, bk, by = "sex", all.x = TRUE)
     if (any(is.na(dt_baseline$k_intake_g))) stop("baseline potassium missing for some sex in ", Country)
 
-    # Achieved K excretion (mmol/d) = intake (mmol/d) / intake:excretion factor.
-    dt_baseline[, k_base_excr := (k_intake_g * 1000 / lp$mg_per_mmol) / lp$intake_to_excretion]
-    # K added (g/d) stoichiometric to Na displaced; -> added excretion (mmol/d).
-    dt_baseline[, k_added_g    := salt_reduction * (lp$k_per_g_kcl / lp$na_per_g_nacl)]
-    dt_baseline[, k_added_mmol := (k_added_g * 1000 / lp$mg_per_mmol)]
-    dt_baseline[, k_post_excr  := k_base_excr + k_added_mmol / lp$intake_to_excretion]
+    # (B) Baseline 24h urinary K excretion (mmol/d) from DIETARY intake (g/d):
+    #     uK0 = intake_g * 1000 / (mg_per_mmol * intake:excretion). The /1.3 is
+    #     applied here because k_intake_g is a dietary intake, never to a urinary
+    #     value. Country x sex specific (drives the Fig-S16 subgroup below).
+    dt_baseline[, baseline_urinary_potassium_mmol :=
+                  (k_intake_g * 1000 / lp$mg_per_mmol) / lp$intake_to_excretion]
+    # (C) K added (g/d) stoichiometric to Na displaced -> dietary mmol/d ->
+    #     CHANGE in 24h urinary excretion (mmol/d) = dietary mmol / 1.3.
+    dt_baseline[, k_added_g                   := salt_reduction * (lp$k_per_g_kcl / lp$na_per_g_nacl)]
+    dt_baseline[, potassium_added_intake_mmol := k_added_g * 1000 / lp$mg_per_mmol]
+    dt_baseline[, delta_urinary_potassium_mmol := potassium_added_intake_mmol / lp$intake_to_excretion]
 
-    # Filippini U-shaped curve: dSBP = offset(base) - offset(post) (positive = drop).
-    dt_baseline[, sbp_reduction_k := k_excretion_to_sbp(k_base_excr, lp$k_sbp_anchors) -
-                                     k_excretion_to_sbp(k_post_excr, lp$k_sbp_anchors)]
-    # Baseline-SODIUM modulation (stronger at higher sodium); `salt` = baseline Na g/d.
-    dt_baseline[, k_na_mult := 1.0]
-    for (r in seq_len(nrow(lp$k_na_modulation))) {
-      dt_baseline[salt >= lp$k_na_modulation$na_lo[r] & salt < lp$k_na_modulation$na_hi[r],
-                  k_na_mult := lp$k_na_modulation$mult[r]]
-    }
-    dt_baseline[, sbp_reduction_k := sbp_reduction_k * k_na_mult]
-    # Non-hypertensive attenuation (effect modification by BP level; NOT a reach proxy).
-    if (isTRUE(lp$nonhtn_attenuation)) {
-      dt_baseline[!(bp_cat %in% hypertensive_bins),
-                  sbp_reduction_k := sbp_reduction_k * lp$nonhtn_factor]
-    }
-    # Combine Na- and K-mediated dSBP additively (Task 1b(iv)).
+    # (D) Figure-2 CHANGE-in-urinary-K dose-response -> POSITIVE SBP reduction
+    #     (population-average curve; negative = adverse SBP rise at high delta uK,
+    #     NOT truncated). (E) modified by the Figure-S16 baseline urinary-K
+    #     subgroup multiplier m_K(uK0) (deficient populations get a LARGER effect).
+    dt_baseline[, sbp_reduction_k_unmod :=
+                  k_delta_to_sbp_reduction(delta_urinary_potassium_mmol, lp$k_delta_sbp_anchors)]
+    dt_baseline[, k_baseline_mult :=
+                  k_baseline_uk_multiplier(baseline_urinary_potassium_mmol,
+                                           lp$baseline_uk_threshold,
+                                           lp$baseline_uk_mult_low,
+                                           lp$baseline_uk_mult_high)]
+    dt_baseline[, sbp_reduction_k := sbp_reduction_k_unmod * k_baseline_mult]
+
+    # (F) Combine Na- and K-mediated dSBP additively (a = additivity_factor; 1.0
+    #     primary, 0.8 Huang-style sensitivity). The COMBINED dSBP feeds ETIHAD
+    #     exactly once; the SSaSS trial-RR guardrail keeps this OFF for stroke
+    #     whenever the trial-RR benchmark is the active LSS method.
     if (isTRUE(lp$additive)) {
       dt_baseline[, sbp_reduction := sbp_reduction + lp$additivity_factor * sbp_reduction_k]
     }  # else: Na-only (K ignored) -- documented non-additive alternative
-    cat("  - LSS na_k_sbp: K channel ACTIVE (benefit-only, no CKD). mean Na-dSBP-only carried;",
-        "mean K-dSBP =", round(mean(dt_baseline$sbp_reduction_k, na.rm = TRUE), 3),
-        "mmHg -> COMBINED dSBP feeds ETIHAD.\n")
+    n_over <- dt_baseline[delta_urinary_potassium_mmol > lp$delta_uk_zero_crossing, .N]
+    cat("  - LSS na_k_sbp: Fig-2 delta-uK x Fig-S16 baseline-uK modifier ACTIVE",
+        "(benefit-only, no CKD). mean K-dSBP =",
+        round(mean(dt_baseline$sbp_reduction_k, na.rm = TRUE), 3), "mmHg; rows above",
+        round(lp$delta_uk_zero_crossing, 1), "mmol/d zero-crossing:", n_over,
+        "-> COMBINED dSBP feeds ETIHAD.\n")
   }
   
   # Step 6: ETIHAD RRs per BP bin x cause
@@ -2211,12 +2268,11 @@ validate_intervention_results <- function(results_dt) {
 # K added) is reported for comparison but the SBP columns are NA (that method's
 # effect is the trial stroke RRs, not an SBP change).
 .nn <- function(x, d = NA) if (is.null(x)) d else x
+# UPDATED vs previous implementation: the audit K math now calls the SAME helpers
+# and constants the model uses (k_delta_to_sbp_reduction on the Fig-2 delta-uK
+# anchors, k_baseline_uk_multiplier on the Fig-S16 baseline-uK subgroup) -- it no
+# longer reimplements a Fig-3 achieved-excretion difference or baseline-Na bands.
 build_lss_audit <- function(scenario_configs, countries = PRIORITY_COUNTRIES) {
-  k_na_mult_of <- function(na_g) {
-    m <- LSS_K_NA_MODULATION
-    hit <- which(na_g >= m$na_lo & na_g < m$na_hi)
-    if (length(hit)) m$mult[hit[1]] else 1.0
-  }
   lss_names <- names(scenario_configs)[
     vapply(scenario_configs, function(c) identical(.nn(c$interventions, ""), "lss"), logical(1))]
   rows <- list()
@@ -2241,24 +2297,37 @@ build_lss_audit <- function(scenario_configs, countries = PRIORITY_COUNTRIES) {
         salt_target <- base_na * disc_share * EFF_LSS_NA_K_DISCRETIONARY * cov
         if (base_na - salt_target < 2) salt_target <- max(0, base_na - 2)
         na_disp   <- salt_target
-        k_added_g <- na_disp * (K_PER_G_KCL / NA_PER_G_NACL)
-        k_add_mm  <- k_added_g * 1000 / K_MG_PER_MMOL
-        k_base_ex <- (bk$k_intake_g * 1000 / K_MG_PER_MMOL) / K_INTAKE_TO_EXCRETION
-        k_post_ex <- k_base_ex + (k_add_mm / K_INTAKE_TO_EXCRETION)
-        na_dsbp   <- ((2.8 * rbp) + (1 - rbp) * 1.0) * na_disp
-        k_dsbp    <- (k_excretion_to_sbp(k_base_ex) - k_excretion_to_sbp(k_post_ex)) * k_na_mult_of(base_na)
+        # (B) baseline dietary K (g/d) -> baseline 24h URINARY K (mmol/d); the /1.3
+        #     is applied because k_intake_g is a DIETARY intake.
+        uk0        <- (bk$k_intake_g * 1000 / K_MG_PER_MMOL) / K_INTAKE_TO_EXCRETION
+        # (C) K added (g/d) -> dietary mmol/d -> CHANGE in urinary K (mmol/d).
+        k_added_g  <- na_disp * (K_PER_G_KCL / NA_PER_G_NACL)
+        k_add_intake_mmol <- k_added_g * 1000 / K_MG_PER_MMOL
+        delta_uk   <- k_add_intake_mmol / K_INTAKE_TO_EXCRETION
+        uk_group   <- if (uk0 < LSS_K_BASELINE_UK_THRESHOLD) "<75" else ">=75"
+        uk_mult    <- k_baseline_uk_multiplier(uk0)                # (E) Fig-S16 modifier
+        na_dsbp    <- ((2.8 * rbp) + (1 - rbp) * 1.0) * na_disp    # (A) Na channel
+        k_dsbp_un  <- k_delta_to_sbp_reduction(delta_uk)           # (D) Fig-2 unmodified
+        k_dsbp     <- k_dsbp_un * uk_mult                          # (E) modified
         is_nak    <- method == "na_k_sbp"
         rows[[length(rows) + 1L]] <- data.table(
           scenario = nm, location = C, sex = S, method = method,
           eligibility_group = elig_grp, eligible_pop_share = cov,
           baseline_sodium_g = base_na, baseline_potassium_g = bk$k_intake_g,
+          baseline_urinary_potassium_mmol = uk0,
+          baseline_uk_group = uk_group, baseline_uk_multiplier = uk_mult,
           potassium_source = bk$source, discretionary_share = disc_share,
           nacl_fraction = LSS_NACL_FRACTION, kcl_fraction = LSS_KCL_FRACTION,
           uptake = LSS_UPTAKE, adherence = LSS_ADHERENCE,
           sodium_displaced_g = na_disp, potassium_added_g = k_added_g,
-          potassium_added_mmol = k_add_mm,
-          sbp_delta_na_mmHg  = if (is_nak) na_dsbp else NA_real_,
-          sbp_delta_k_mmHg   = if (is_nak) k_dsbp  else NA_real_,
+          potassium_added_intake_mmol = k_add_intake_mmol,
+          # documented backward-compat alias (dietary mmol/d, == potassium_added_intake_mmol)
+          potassium_added_mmol = k_add_intake_mmol,
+          delta_urinary_potassium_mmol = delta_uk,
+          delta_uk_exceeds_zero_crossing = delta_uk > LSS_K_DELTA_UK_ZERO_CROSSING,
+          sbp_delta_na_mmHg      = if (is_nak) na_dsbp   else NA_real_,
+          sbp_delta_k_unmod_mmHg = if (is_nak) k_dsbp_un else NA_real_,
+          sbp_delta_k_mmHg       = if (is_nak) k_dsbp    else NA_real_,
           sbp_delta_combined_mmHg = if (is_nak)
             na_dsbp + (if (isTRUE(LSS_NAK_ADDITIVE)) LSS_ADDITIVITY_FACTOR else 0) * k_dsbp
             else NA_real_,
@@ -2300,14 +2369,27 @@ run_config <- list(
   note        = "Written by 07_run_interventions.R; read by report.RMD. Do not re-guess these.",
   lss = list(
     method = LSS_METHOD, benchmark_ssass = LSS_BENCHMARK_SSASS,
+    # Overall LSS scenario identifier stays "na_k_sbp"; the K submethod names the
+    # updated potassium pathway so readers can distinguish it without renaming.
+    potassium_method = "filippini_fig2_delta_uk_baseline_uk_modifier",
     nacl_fraction = LSS_NACL_FRACTION, kcl_fraction = LSS_KCL_FRACTION,
     uptake = LSS_UPTAKE, adherence = LSS_ADHERENCE,
     additive = LSS_NAK_ADDITIVE, additivity_factor = LSS_ADDITIVITY_FACTOR,
-    nonhtn_attenuation = LSS_K_NONHTN_ATTENUATION, nonhtn_factor = LSS_K_NONHTN_FACTOR,
     coverage_all = LSS_COVERAGE_ALL, s2_coverage_levels = LSS_S2_COVERAGE_LEVELS,
     k_mg_per_mmol = K_MG_PER_MMOL, k_intake_to_excretion = K_INTAKE_TO_EXCRETION,
     na_per_g_nacl = NA_PER_G_NACL, k_per_g_kcl = K_PER_G_KCL,
-    k_sbp_anchors = LSS_K_SBP_ANCHORS, k_na_modulation = LSS_K_NA_MODULATION,
+    # UPDATED vs previous implementation: Fig-2 change-in-urinary-K anchors +
+    # Fig-S16 baseline urinary-K subgroup modifier (replacing the Fig-3 achieved-
+    # excretion curve, baseline-Na bands and non-HTN attenuation).
+    k_delta_sbp_anchors    = LSS_K_DELTA_SBP_ANCHORS,
+    baseline_uk_threshold  = LSS_K_BASELINE_UK_THRESHOLD,
+    baseline_uk_mult_low   = LSS_K_BASELINE_MULT_LOW,
+    baseline_uk_mult_high  = LSS_K_BASELINE_MULT_HIGH,
+    baseline_uk_subgroup_sbp = LSS_K_SUBGROUP_SBP,
+    delta_uk_zero_crossing = LSS_K_DELTA_UK_ZERO_CROSSING,
+    # The retired Fig-3 / baseline-Na / non-HTN modifiers are NOT active in the
+    # primary pathway (deleted, not merely disabled).
+    previous_modifiers_active = FALSE,
     eff_lss_na_k_discretionary = EFF_LSS_NA_K_DISCRETIONARY,
     eff_lss_sodium_only = EFF_LSS_SODIUM_ONLY,
     harms_modelled = "none (no CKD/hyperkalaemia channel)"),
@@ -2352,12 +2434,12 @@ registerDoParallel(cl)
 # Export all objects required by workers.
 #   Dropped vs 06 : default_sodium_policy_table, summarize_sodium_policy_package
 #   Added   vs 06 : compute_total_efficacy, source_shares, intervention_effects
-#   Added (Tasks 1/3): compute_salteff_by_year, k_excretion_to_sbp,
-#     source_shares_by_year, htn_eligibility, baseline_potassium, LSS_PARAMS,
-#     LSS_COVERAGE_ALL -- anything a worker touches must be here (run_multiple_
-#     scenarios resolves year-specific salteff + per-sex coverage on the worker,
-#     and calculate_sodium_impact_etihad reads LSS_PARAMS/baseline_potassium and
-#     calls k_excretion_to_sbp).
+#   Added (Tasks 1/3): compute_salteff_by_year, k_delta_to_sbp_reduction,
+#     k_baseline_uk_multiplier, source_shares_by_year, htn_eligibility,
+#     baseline_potassium, LSS_PARAMS, LSS_COVERAGE_ALL -- anything a worker touches
+#     must be here (run_multiple_scenarios resolves year-specific salteff + per-sex
+#     coverage on the worker, and calculate_sodium_impact_etihad reads LSS_PARAMS/
+#     baseline_potassium and calls k_delta_to_sbp_reduction + k_baseline_uk_multiplier).
 clusterExport(
   cl,
   varlist = c(
@@ -2377,8 +2459,10 @@ clusterExport(
     "source_shares",
     "source_shares_by_year",
     "intervention_effects",
-    # LSS Na/K->SBP inputs + helpers (Task 1)
-    "k_excretion_to_sbp",
+    # LSS Na/K->SBP inputs + helpers (Task 1). UPDATED: the Fig-2 delta-uK dose-
+    # response + Fig-S16 baseline-uK multiplier helpers replace k_excretion_to_sbp.
+    "k_delta_to_sbp_reduction",
+    "k_baseline_uk_multiplier",
     "LSS_PARAMS",
     "baseline_potassium",
     "htn_eligibility",

@@ -1,0 +1,1047 @@
+---
+title: "Health Effects to Dietary Sodium Reduction"
+subtitle: "Technical review of the source-split CVD model and preliminary results for prioritized countries"
+author: "Resolve to Save Lives (RTSL) and University of Washington"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output:
+  beamer_presentation:
+    latex_engine: xelatex
+    keep_tex: false
+    slide_level: 2
+    toc: false
+    citation_package: biblatex
+bibliography: references.bib
+biblio-style: authoryear
+classoption: "aspectratio=169"
+header-includes:
+  - \input{beamer_preamble.tex}
+fontsize: 11pt
+---
+
+# Recap and today's plan
+
+```{r setup, include=FALSE}
+# SETUP — load deck artifacts only (zero recomputation). Every figure/table/
+# number is produced in reports/report.RMD and handed over via docs/deck_assets/.
+# This deck performs NO calculations of its own.
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", out.width = "100%")
+
+deck_assets <- "deck_assets"
+bundle      <- file.path(deck_assets, "deck_data.rds")
+if (!file.exists(bundle))
+  stop("deck_data.rds not found in docs/deck_assets/. Render reports/report.RMD ",
+       "first — its 'deck-export' chunk generates every figure/table/number ",
+       "this deck consumes.")
+
+deck <- readRDS(bundle)
+N    <- deck$nums                                  # pre-formatted numbers
+fig  <- function(name) file.path(deck_assets, deck$figs[[name]])  # figure path
+tbl  <- function(name) cat(deck$tex[[name]])       # emit pre-rendered LaTeX table
+```
+
+## Recap: where we left off (July 23 call)
+
+\justifying
+\footnotesize
+
+From the **July 23** RTSL--UW modeling call, three directions were set:
+
+- **LSS** --- UW had presented two options: (1) apply the **SSaSS trial relative risks** directly, or (2) model **sodium + potassium $\to$ SBP $\to$ CVD** mechanistically (following Matti and colleagues). Applying SSaSS RRs to the *general* population was judged inconsistent (trial participants were higher-risk), and option (1) cannot represent the whole-population scenario. **Agreed:** investigate and implement option (2) so scenario 2 can be modeled.
+- **Fiscal policy** --- keep a **simple, transparent** Bloomberg approach; use the **Philippines study** as the primary reference; add **sensitivity analyses** for the large parameter uncertainty. Fiscal is the **lowest-priority** lever for the reinvestment inputs.
+- **Euromonitor** --- replace the single global $\sim$2.6\%/yr packaged-growth assumption with **country-specific** trends (Matti to supply).
+
+\medskip
+\footnotesize Today we present the **current build** --- the work completed since July 23 --- and **preliminary results** for the `r N$n_countries` prioritized countries.
+
+<!-- ## Recap: how the July 23 directions are now implemented -->
+
+<!-- \justifying -->
+<!-- \scriptsize -->
+
+<!-- \begin{columns}[T] -->
+<!-- \begin{column}{0.52\textwidth} -->
+<!-- \textbf{Scope \& data (unchanged)} -->
+<!-- \begin{itemize} -->
+<!--   \item Sodium sources: \textbf{combined approach} --- country data where available, else the Bhat/Marklund GDP regression \autocite{marklund2022sources}. Drivers extend beyond GDP (condiments/bouillon in Viet Nam, Nigeria). -->
+<!--   \item All \textbf{`r N$n_countries`} priority countries now have documented source shares (Nigeria/Cameroon provisional; Nigeria a proxy for Cameroon). -->
+<!--   \item Benchmark: full package vs the 100M-Lives 30\% sodium cut (contextual cross-check, not a like-for-like validation). -->
+<!--   \item \textbf{Ramp-up}: \textbf{`r N$scaleup1`$\to$`r N$scaleup2`} linear, held after. -->
+<!-- \end{itemize} -->
+<!-- \end{column} -->
+<!-- \begin{column}{0.48\textwidth} -->
+<!-- \textbf{Directions now built} -->
+<!-- \begin{itemize} -->
+<!--   \item \textbf{LSS}: primary model is now \textbf{Na/K $\to$ SBP $\to$ CVD} (mechanistic). SSaSS trial RRs retained only as a \textbf{benchmark} for the HTN scenarios --- \emph{never combined} with the Na/K path. -->
+<!--   \item \textbf{Fiscal}: explicit \textbf{tax $\to$ price $\to$ demand $\to$ sodium} pathway with \textbf{low/base/high} sensitivity. \alert{EXPLORATORY} --- lowest priority. -->
+<!--   \item \textbf{Euromonitor}: \textbf{country-specific} packaged trend (median $\approx$`r N$pkg_apc_median`/yr) replaces the single $\sim$2.6\%/yr assumption. -->
+<!--   \item \textbf{Media}: \textbf{excluded} from reported scenarios (kept in the registry). -->
+<!--   \item \textbf{Public procurement}: provisional \textbf{adults-only} share pending RTSL data. -->
+<!-- \end{itemize} -->
+<!-- \end{column} -->
+<!-- \end{columns} -->
+
+## Today's agenda
+
+\justifying
+\footnotesize
+
+\begin{enumerate}
+  \item \textbf{What's changed since July 23} --- the new mechanistic \textbf{Na/K LSS model} (now primary; SSaSS a benchmark), the explicit \textbf{fiscal tax$\to$price$\to$demand pathway} (exploratory, with low/base/high sensitivity), and \textbf{country-specific Euromonitor} packaged-food trends.
+  \item \textbf{Model inputs} --- updated Euromonitor packaged-food trends, the five-source sodium split, and the applied salt-effect ($\eta$) by intervention.
+  \item \textbf{Methods} --- the source-split logic (sources $\to$ $\eta$), the current \textbf{Na/K LSS model} (and how it compares with Huang et al.\ 2026), and the \textbf{fiscal pathway} (vs Saxena et al.\ 2025).
+  \item \textbf{Preliminary results} --- baseline burden, projected trajectories by scenario, and deaths delayed across the `r N$n_countries` prioritized countries.
+  \item \textbf{Limitations \& discussion} --- remaining open items and next steps.
+\end{enumerate}
+
+<!-- ======================================================================
+     1b. MAIN CHANGES SINCE THE LAST PRESENTATION
+     ====================================================================== -->
+
+<!-- # Main changes since July 23 -->
+
+<!-- ## 1. Fiscal policy: now an explicit tax pathway (exploratory) -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- - **Was:** a single opaque multiplier --- a fixed effect applied to the taxed packaged share. -->
+<!-- - **Now:** an **explicit behavioral pathway**, $\text{tax}\to\text{price}\to\text{demand}\to\text{sodium}$, anchored on the Philippines study \autocite{saxena2025}. Base case: **`r N$fiscal_tax_rate`** tax $\times$ **`r N$fiscal_pass_through`** pass-through $=$ **`r N$fiscal_price_change`** price rise; $\times$ elasticity **`r N$fiscal_elasticity`** $\Rightarrow$ **`r N$fiscal_taxed_pkg_red`** fewer taxed products; $\times$ **`r N$fiscal_taxable_share`** taxable-packaged share $\Rightarrow$ **`r N$fiscal_pkg_red`** of packaged sodium (applied $\eta$ = `r N$eff_fiscal` on packaged). -->
+<!-- - **Sensitivity:** low/base/high span **`r N$fiscal_low_pkg`--`r N$fiscal_high_pkg`** of packaged sodium (full pathway table in Methods). -->
+
+<!-- \medskip -->
+<!-- \begin{alertblock}{Exploratory} -->
+<!-- \footnotesize -->
+<!-- Evidence for taxing high-sodium foods specifically is limited, and transferring price elasticities from other foods or sugar-sweetened beverages is contested. Tax rate $\ne$ sodium reduction, and \emph{not} all packaged sodium is taxable. Kept deliberately simple and transparent; the parameters are RTSL-to-confirm. -->
+<!-- \end{alertblock} -->
+
+<!-- <!-- ## 2. Behavior change / mass media: still excluded (unchanged) --> -->
+
+<!-- <!-- \justifying --> -->
+<!-- <!-- \footnotesize --> -->
+
+<!-- <!-- - **Excluded from all reported scenarios** --- RTSL funds policy change, not mass media for behavior change. --> -->
+<!-- <!-- - **Retained** in the registry and effect-size tables ($\eta$ = `r N$eff_media` to discretionary \emph{and} packaged) so it can be re-enabled later without re-plumbing. --> -->
+<!-- <!-- - No change since the previous build; noted here only for completeness. --> -->
+
+<!-- ## 3. LSS: now mechanistic Na/K $\to$ SBP (primary) -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- - **Was:** the **SSaSS trial relative risks** applied directly (stroke-only; also lowered stroke case fatality) --- flagged at July 23 as inconsistent for the general population. -->
+<!-- - **Now:** a mechanistic **sodium + potassium $\to$ SBP $\to$ CVD** model (`r N$lss_ratio` substitute). The displaced discretionary sodium **and** the added potassium both lower SBP, which drives **all four CVD causes** via the existing SBP machinery; **case fatality is unchanged** (as for the other sodium$\to$SBP policies). -->
+<!-- - **Three scenarios:** whole-population (s2, coverage `r N$lss_cov_all`), **diagnosed HTN** (s4, `r N$htn_dx_pop` of adults), **treated HTN** (s5, `r N$htn_tx_pop`) --- s4/s5 sized by **NCD-RisC `r N$htn_source_year`** eligibility, replacing the old BP$\ge$140 proxy. -->
+<!-- - **SSaSS trial RRs** are retained only as a **benchmark** for s4/s5 --- \emph{never combined} with the Na/K model. -->
+
+<!-- \medskip -->
+<!-- \footnotesize Benefit-only --- no CKD / hyperkalaemia harm channel (unlike Huang et al.\ 2026). Full pathway and the Huang comparison are in Methods. -->
+
+<!-- ## 4. Packaged food: country-specific Euromonitor trend -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- - **Was:** a single global packaged-growth assumption ($\sim$2.6\%/yr) applied to every country. -->
+<!-- - **Now:** **country-specific** Euromonitor 2025--2030 predictions --- one pre-combined per-country growth rate with a 95\% CI (median $\approx$**`r N$pkg_apc_median`**/yr, range `r N$pkg_apc_range`) --- grown to a 2030 end-state, held flat after, capped at a **`r N$euro_ceiling`** ceiling. -->
+<!-- - **Composition shift only** --- total sodium intake is unchanged; the other four sources renormalise each year. Source: Euromonitor (Marklund, v002). -->
+
+<!-- \medskip -->
+<!-- \begin{alertblock}{Open items (July 23)} -->
+<!-- \footnotesize -->
+<!-- Whether to keep rice/pasta/noodle categories (low-sodium staples could dilute the trend), and what ``max'' packaged share to cap at (Matti used 50\% for India; the model currently caps at `r N$euro_ceiling`). And should packaged growth raise \emph{total} sodium --- and hence baseline CVD --- or only shift composition, as now? -->
+<!-- \end{alertblock} -->
+
+
+
+<!-- ## 5. Public procurement: adults-only share still provisional -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- - Public food procurement acts only on the **public / institutional** sodium source (e.g. `r N$public_share` of total intake in Viet Nam). -->
+<!-- - These shares remain **provisional** pending RTSL's per-country **adults-only** values (the earlier school-inclusive assumption is being revised down). -->
+<!-- - Public-procurement and full-package results should therefore be read as **provisional** until those inputs land. -->
+
+<!-- ======================================================================
+     2. BACKGROUND
+     ====================================================================== -->
+
+<!-- # Background -->
+
+<!-- ## Project objective and policy question -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- - Estimate the **national-scale health and economic impact** of dietary sodium-reduction policies using a population CVD model. -->
+<!-- - Quantify **deaths and cases delayed** (IHD, ischemic stroke, hemorrhagic stroke, hypertensive heart disease) and **DALYs averted** over `r N$scaleup1`--`r N$horizon_end`, with a full **benefit--cost analysis**. -->
+<!-- - Focus on **RTSL partner countries** and on policies governments can realistically implement. -->
+
+<!-- \medskip -->
+<!-- \begin{block}{The question the model answers} -->
+<!-- \footnotesize -->
+<!-- How many cardiovascular deaths are \emph{delayed} by each sodium-reduction policy --- and by a coordinated \textbf{package} --- when each policy's documented effect is applied \textbf{only to the sodium sources it can actually reach}? -->
+<!-- \end{block} -->
+
+<!-- ## Causal pathway and scope -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- \textbf{Exposure $\to$ disease chain (unchanged):} -->
+
+<!-- $$ -->
+<!-- \text{Sodium} \;\longrightarrow\; \text{SBP} \;\longrightarrow\; \text{CVD incidence} \;\longrightarrow\; \text{Well}\to\text{Sick}\to\text{Dead} -->
+<!-- $$ -->
+
+<!-- - **SBP response** to sodium from the Filippini dose--response meta-analysis \autocite{Filippini2021}. -->
+<!-- - **Incidence response** to SBP from the Ettehad per-10-mmHg relative risks \autocite{ettehad2016}, applied by BP bin and cause. -->
+<!-- - **Four causes** modelled jointly (IHD, ischemic stroke, hemorrhagic stroke, HHD). For the **sodium$\to$SBP** policies **case fatality is held at baseline**, so the model shifts deaths later --- we report **deaths delayed**. **LSS is the exception**: its SSaSS trial RRs also lower stroke case fatality, so LSS *averts* some deaths (still reported under "deaths delayed" for comparability). -->
+<!-- - **Scope:** `r N$n_countries` prioritized countries; annual projection over **`r N$study_years`**; scale-up `r N$scaleup1`--`r N$scaleup2`. -->
+
+<!-- ======================================================================
+     3. MODEL INPUTS
+     ====================================================================== -->
+
+<!-- # Model inputs -->
+
+<!-- ## Model inputs at a glance -->
+
+<!-- \justifying -->
+<!-- \scriptsize -->
+
+<!-- \begin{tabular}{p{3.4cm} p{8.6cm}} -->
+<!-- \toprule -->
+<!-- \textbf{Input} & \textbf{Role} \\ -->
+<!-- \midrule -->
+<!-- Baseline transition rates (GBD) & Age $\times$ sex $\times$ year $\times$ cause incidence (IR), case fatality (CF), background \& COVID mortality, population ($N_x$). \\ -->
+<!-- BP distribution & Mean/SD systolic BP by age $\times$ sex, raised-BP fraction, diabetes prevalence. \\ -->
+<!-- Baseline sodium intake & 2024 mean intake, split into five sources. \\ -->
+<!-- \textbf{Sodium source shares} & Five-source split of baseline sodium per country (this section). \\ -->
+<!-- \textbf{Packaged-food trend} & \textbf{New:} \textbf{country-specific} Euromonitor 2025--2030 predictions (median APC $\approx$ `r N$pkg_apc_median`/yr) grow the packaged \emph{share} to a 2030 end-state, held flat after --- composition shift only, total intake unchanged. \\ -->
+<!-- GBD relative risks & Log-linear RR per 10 mmHg SBP; sets bin-specific baseline incidence. \\ -->
+<!-- Ettehad relative risks & RR per 10 mmHg SBP reduction by BP bin $\times$ cause. \\ -->
+<!-- Scale-up schedule & Linear ramp `r N$scaleup1`$\to$`r N$scaleup2`, then held. \\ -->
+<!-- \bottomrule -->
+<!-- \end{tabular} -->
+
+<!-- \medskip -->
+<!-- \footnotesize The source-split logic and the packaged-food trend are the changes from the earlier single-pool build; everything downstream of $\eta$ is unchanged. -->
+
+<!-- ## Sodium source shares by country -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- Baseline sodium is partitioned into **five mutually exclusive sources** (shares sum to 1). `inherent` sodium is **never targeted**; each policy acts only on the source(s) it can reach. -->
+
+<!-- ```{r fig-source-shares, out.width="86%"} -->
+<!-- knitr::include_graphics(fig("source_shares")) -->
+<!-- ``` -->
+
+<!-- <!-- \scriptsize Country data where available; otherwise predicted from GDP per capita \autocite{marklund2022sources}. **Nigeria/Cameroon** use provisional RTSL/Matti shares (bouillon + condiments counted as packaged; Nigeria a proxy for Cameroon). These are the **2024** shares; the **packaged share then grows** over time on the Euromonitor trend (median APC $\approx$ `r N$pkg_apc_median`/yr; per-country values in the appendix). --> -->
+
+
+
+<!-- ## Applied salt-effect ($\eta$) by intervention -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- Each intervention has a documented **relative reduction** applied to its **target source**. Values match `code/07_run_interventions.R` exactly. -->
+
+<!-- ```{r tbl-effect-sizes, results='asis'} -->
+<!-- tbl("effect_sizes") -->
+<!-- ``` -->
+
+<!-- \scriptsize -->
+<!-- Media (retained in the registry, excluded from reported scenarios) acts on discretionary **and** packaged (`r N$eff_media` each). FOPL, salt targets and fiscal all act on **packaged** and compose multiplicatively when combined: e.g.\ FOPL (`r N$eff_fopl`) + salt targets (`r N$eff_salttargets`) $\Rightarrow 1-(1-0.138)(1-0.20)=$ **`r N$compose_fopl_salt`**. **Fiscal (base) is `r N$eff_fiscal` on packaged** --- the base case of the exploratory tax pathway (see Methods). **LSS** is the mechanistic Na/K model, not a single source effect. -->
+
+<!-- ## Illustrative $\eta$ by intervention and full package -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- `salteff` ($\eta$) is the **fraction of total intake** each scenario reduces at full implementation --- **country-specific**, because it depends on local source shares: -->
+<!-- $$ -->
+<!-- \eta \;=\; \sum_{s}\, \text{share}_s \cdot \Bigl[\,1-\textstyle\prod_i (1-\text{eff}_{i,s})\Bigr]. -->
+<!-- $$ -->
+
+<!-- ```{r tbl-salteff, results='asis'} -->
+<!-- tbl("salteff") -->
+<!-- ``` -->
+
+<!-- \scriptsize $\eta$ is largest where the target source dominates local intake --- packaged policies in packaged-heavy Viet Nam; LSS in discretionary-heavy Bangladesh/China. The full-package row composes all active policies. -->
+
+<!-- ## Full-package $\eta$: composition by country -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- Bar height = each country's full-package `salteff`; segments show the per-source contributions ($\text{share}_s \times \text{composed}_s$). -->
+
+<!-- ```{r fig-salteff-pkg, out.width="82%"} -->
+<!-- knitr::include_graphics(fig("salteff_pkg")) -->
+<!-- ``` -->
+
+<!-- ======================================================================
+     4. METHODS
+     ====================================================================== -->
+
+# Methods
+
+## Packaged share of sodium over time
+
+\footnotesize
+
+Each country's packaged share grows on its own Euromonitor trend to a 2030 end-state, then holds flat (dashed line $=$ the `r N$euro_ceiling` ceiling). The other four sources renormalise each year --- a composition shift only.
+
+```{r fig-packaged-time, out.width="80%"}
+knitr::include_graphics(fig("packaged_time"))
+```
+
+<!-- ## The source-split approach: from sources to $\eta$ -->
+
+<!-- \justifying -->
+<!-- \footnotesize -->
+
+<!-- ```{r fig-flow, out.width="100%"} -->
+<!-- knitr::include_graphics(fig("flow")) -->
+<!-- ``` -->
+
+<!-- \medskip -->
+<!-- - Split baseline sodium into five sources; apply each policy's reduction **only** to the source(s) it reaches. -->
+<!-- - Effects on the **same** source compose multiplicatively --- $\text{composed}_s = 1-\prod_i(1-\text{eff}_{i,s})$ --- so overlapping packaged policies never double-count or exceed 100%. -->
+<!-- - Share-weight and sum to a single total-intake fraction $\eta$ (`salteff`), which feeds the unchanged epidemiological pathway. -->
+
+<!-- \scriptsize \textbf{Worked check (asserted in code):} public procurement in Viet Nam touches only the public source (share `r N$public_share`, effect `r N$eff_public`) $\Rightarrow \eta = 0.20\times0.05 =$ \textbf{`r N$vn_sanity`}. \textbf{The `r N$public_share` public share is PROVISIONAL} --- it assumed school coverage and is being revised \emph{downward} for this adults-only model (RTSL to deliver per-country shares). -->
+
+<!-- ## From $\eta$ to health impact -->
+
+<!-- \justifying -->
+<!-- \scriptsize -->
+
+<!-- Given a country's $\eta$, sodium falls and --- through blood pressure --- so does CVD **incidence** (case fatality unchanged for the sodium$\to$SBP policies; **LSS** additionally lowers stroke case fatality via the trial RRs): -->
+
+<!-- 1. **Target reduction:** $\text{salt\_target} = \text{salt}\cdot\eta$, subject to a **2 g/day minimum-intake floor**. -->
+<!-- 2. **Linear scale-up** from `r N$scaleup1` to `r N$scaleup2`, then held. -->
+<!-- 3. **Sodium $\to$ SBP (Filippini)** \autocite{Filippini2021}: $\;\Delta SBP = \bigl(2.8\cdot\text{raisedBP} + 1.0\cdot(1-\text{raisedBP})\bigr)\cdot \text{salt\_reduction}$. -->
+<!-- 4. **Baseline bin-specific incidence** scaled by the GBD log-linear RR per 10 mmHg, normalised to recover the observed $IR$. -->
+<!-- 5. **SBP $\to$ incidence (Ettehad)** \autocite{ettehad2016}: bin-specific RR per 10 mmHg drives the proportional incidence change; averaged over BP bins. -->
+<!-- 6. **Case fatality unchanged** for the sodium$\to$SBP policies $\Rightarrow$ **deaths delayed**. (**LSS exception:** the trial-RR pathway lowers stroke case fatality by `r N$lss_cf_mult`, so LSS also *averts* some deaths.) -->
+
+<!-- ## The Lives Saved model: state-transition engine -->
+
+<!-- \justifying -->
+<!-- \scriptsize -->
+
+<!-- Each country/sex/cause/scenario tracks **Well / Sick / Dead**, advanced one year at a time (ages 20--95, `r N$study_years`). With last year's cohort values: -->
+
+<!-- $$ -->
+<!-- \begin{aligned} -->
+<!-- \text{newcases}_t &= \text{well}_{t-1}\cdot IR \\[1pt] -->
+<!-- \text{sick}_t     &= \text{sick}_{t-1}\bigl(1-(CF+\text{BG.mx}+\text{covid.mx})\bigr) + \text{well}_{t-1}\cdot IR \\[1pt] -->
+<!-- \text{dead}_t     &= \text{sick}_{t-1}\cdot CF \\[1pt] -->
+<!-- \text{pop}_t      &= \text{pop}_{t-1} - \text{all.mx}_{t-1}, \qquad -->
+<!-- \text{well}_t = \text{pop}_t - \text{all.mx}_t - \text{sick}_t -->
+<!-- \end{aligned} -->
+<!-- $$ -->
+
+<!-- - Seeded (2017) from GBD prevalence and mortality; every quantity floored at zero. -->
+<!-- - For the sodium$\to$SBP policies the **only** lever is $IR$ (steps 1--6); $CF$, background and COVID mortality are untouched. **LSS is the exception**: its trial-RR pathway moves both stroke $IR$ and stroke $CF$. -->
+<!-- - **Aggregation:** the four causes share one population, so `pop`/`all.mx` are identical across cause rows (denominator taken from a single cause); `sick`/`well`/`dead`/`newcases` are cause-specific and summed over causes. -->
+
+## LSS (primary): mechanistic Na/K $\to$ SBP $\to$ CVD
+
+\scriptsize
+
+```{r fig-lss-pathway, out.width="90%"}
+knitr::include_graphics(fig("lss_pathway"))
+```
+
+\vspace{-0.2em}
+\begin{columns}[T]
+\begin{column}{0.54\textwidth}
+\scriptsize
+\textbf{Central equation:}\ \ $\Delta \mathrm{SBP}_{\mathrm{LSS}} = \Delta \mathrm{SBP}_{\mathrm{Na}} + \Delta \mathrm{SBP}_{\mathrm{K}}$
+\begin{itemize}\itemsep=1.5pt
+  \item \textbf{Na:} `r N$lss_ratio` substitute cuts discretionary Na (KCl $\times$ adherence `r N$lss_adherence` $\times$ uptake `r N$lss_uptake` $=$ `r N$lss_eff_na_k_disc`); Filippini Na$\to$SBP 2.8/1.0 mmHg per g (raised/normal BP); 2 g/day floor.
+  \item \textbf{K:} added K $\to$ excretion (`r N$lss_k_mg_per_mmol` mg/mmol; $\div$`r N$lss_k_intake_excr`) $\to$ Filippini U-curve \autocite{Filippini2020}; baseline-Na modulated; $\times$`r N$lss_nonhtn_factor` in normotensives; baseline K Reddin 2023 \autocite{Reddin2023}.
+  \item \textbf{Combine:} Na$+$K additive $\Rightarrow$ all four CVD causes; case fatality unchanged.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\scriptsize
+\textbf{Coverage scenarios}
+\begin{itemize}\itemsep=1.5pt
+  \item \textbf{s2} whole population (coverage `r N$lss_cov_all`)
+  \item \textbf{s4} diagnosed HTN --- NCD-RisC `r N$htn_source_year` (`r N$htn_dx_pop` of adults)
+  \item \textbf{s5} treated HTN --- NCD-RisC (`r N$htn_tx_pop`)
+\end{itemize}
+\smallskip
+\textbf{Mean $\Delta$SBP (s2)} $=$ `r N$lss_dsbp_tot` mmHg ($=$ `r N$lss_dsbp_na` Na $+$ `r N$lss_dsbp_k` K).
+
+\smallskip
+\textbf{Benefit-only:} harms `r N$lss_harms`. SSaSS trial RRs are an s4/s5 \emph{benchmark} only --- never combined.
+\end{column}
+\end{columns}
+
+## How our LSS model compares with Huang et al.\ (2026)
+
+\scriptsize
+
+Same **Na $+$ K $\to$ SBP** structure, `r N$lss_ratio` formulation, Filippini (2020) potassium dose--response and Reddin (2023) baseline potassium --- but narrower in scope and **benefit-only**.
+
+```{r tbl-huang, results='asis'}
+tbl("huang_ours")
+```
+
+\smallskip
+\scriptsize Key departures: LSS is integrated in a \emph{dynamic} `r N$n_countries`-country CVD model (not a static 193-country CRA), covers four SBP-mediated causes (not Huang's broad CVD $+$ CKD basket), and does \textbf{not} model the CKD / hyperkalaemia harm channel Huang includes for population-wide scenarios. These are differences in scope, not corrections \autocite{huang2026}.
+
+## LSS: Huang et al. (2026) vs. our current implementation
+
+\tiny
+
+\begin{columns}[T]
+
+\begin{column}{0.49\textwidth}
+\textbf{Huang et al.: static comparative risk assessment}
+
+\[
+Na^1 = Na^0 - 0.25\,Na^{R},
+\qquad
+K^1 = K^0 + \Delta K
+\]
+
+\[
+\Delta SBP
+=
+\Delta SBP_{Na}
++
+\Delta SBP_{K}
+\]
+
+Post-LSS SBP distribution is shifted:
+
+\[
+X^1 \sim N(\mu+\Delta SBP,\sigma^2)
+\]
+
+Disease impact is calculated using the full RR function:
+
+\[
+PIF
+=
+1-
+\frac{E_{P^1}[RR(X)]}
+     {E_{P^0}[RR(X)]}
+\]
+
+\[
+D^{averted}=PIF\times D^0
+\]
+
+\textbf{Net effect also subtracts hyperkalaemia harm:}
+
+\[
+D^{net}
+=
+D^{averted}_{SBP}
+-
+D^{hyperK}_{CKD}
+\]
+
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\textbf{UW--RTSL: dynamic state-transition implementation}
+
+LSS displaces discretionary sodium:
+
+\[
+\Delta Na
+=
+Na^0\,q_D(0.25)(0.92)(u)(c_t)
+\]
+
+and adds potassium stoichiometrically:
+
+\[
+\Delta K
+=
+\Delta Na
+\frac{0.524}{0.393}
+\approx1.33\,\Delta Na
+\]
+
+SBP reduction is:
+
+\[
+\Delta SBP_{Na}
+=
+[2.8H+1.0(1-H)]\Delta Na
+\]
+
+\[
+\Delta SBP
+=
+\Delta SBP_{Na}
++
+m_{Na}\,m_H\,\Delta SBP_K
+\]
+
+where $\Delta SBP_K$ comes from the Filippini K-excretion curve.
+
+Rather than a PIF, $\Delta SBP$ modifies annual incidence:
+
+\[
+IR'_{b,c}
+=
+IR_{b,c}
+\left[
+1-(1-RR^{10}_{b,c})
+\frac{\Delta SBP}{10}
+\right]
+\]
+
+and the new incidence enters the annual population/state-transition model:
+
+\[
+Pop_t \rightarrow Cases_t \rightarrow Deaths_t
+\]
+
+\textbf{CF unchanged:}\quad $CF'=CF$.
+
+\end{column}
+\end{columns}
+
+<!-- \medskip -->
+
+<!-- \begin{alertblock}{Key interpretation} -->
+<!-- \tiny -->
+<!-- The biological pathway is intentionally similar --- \textbf{LSS $\to$ lower Na + higher K $\to$ lower SBP $\to$ lower CVD risk} --- but the mathematical health-impact engine differs. Huang applies a \textbf{distributional PIF to current disease burden} and explicitly models CKD/hyperkalaemia harms; our model applies the Na/K-induced SBP change to \textbf{cause-specific incidence inside a dynamic 2026--2050 state-transition model}. The current implementation is therefore \textbf{benefit-only for LSS} and does not reproduce Huang's PIF or hyperkalaemia module. -->
+<!-- \end{alertblock} -->
+
+## Fiscal policy (exploratory): explicit tax pathway
+
+\scriptsize
+
+```{r fig-fiscal-pathway, out.width="98%"}
+knitr::include_graphics(fig("fiscal_pathway"))
+```
+
+\vspace{-0.3em}
+**Base case (worked):** `r N$fiscal_tax_rate` tax $\times$ `r N$fiscal_pass_through` pass-through $=$ `r N$fiscal_price_change` price rise; $\times$ elasticity `r N$fiscal_elasticity` $\Rightarrow$ **`r N$fiscal_taxed_pkg_red`** fewer taxed products; $\times$ **`r N$fiscal_taxable_share`** taxable-packaged share $\Rightarrow$ **`r N$fiscal_pkg_red`** of packaged sodium; then $\times$ each country's packaged share of *total* dietary sodium $\to$ SBP $\to$ CVD. **Tax rate $\ne$ sodium reduction; not all packaged sodium is taxable.**
+
+```{r tbl-fiscal-audit, results='asis'}
+tbl("fiscal_audit")
+```
+
+\scriptsize Table M5 (low/base/high). The last column, "$\Delta$ total packaged", $=$ "$\Delta$ taxed packaged" $\times$ taxable share. Parameters are RTSL-to-confirm.
+
+## Fiscal policy: our model vs Saxena et al.\ (Philippines, 2025)
+
+\scriptsize
+
+Saxena et al.\ \autocite{saxena2025} is our conceptual and empirical **anchor** --- a `r N$saxena_tax` tax giving `r N$saxena_na_red` sodium over `r N$saxena_horizon`. Ours deliberately **simplifies** that structure into a transparent, transferable multi-country approximation.
+
+```{r tbl-saxena, results='asis'}
+tbl("saxena_ours")
+```
+
+\smallskip
+\scriptsize \textbf{Not reproduced (by design):} the full QUAIDS demand system; category-specific own/cross-price elasticities; wealth-quintile heterogeneity; item-level tax eligibility; endogenous reformulation; the sugar$\to$BMI$\to$diabetes pathway; and tax-revenue / full economic evaluation.
+
+## Fiscal policy: Saxena et al. vs. current RTSL model
+
+\tiny
+
+\begin{columns}[T,onlytextwidth]
+
+\begin{column}{0.48\textwidth}
+
+Saxena et al. (Philippines)
+
+\[
+Tax \rightarrow Price_j \rightarrow Q_j
+\rightarrow Na \rightarrow SBP \rightarrow CVD
+\]
+
+**Tax $\rightarrow$ food demand**
+
+Uses a multi-product demand system with own- and cross-price elasticities:
+
+\[
+\frac{\Delta Q_i}{Q_i}
+\approx
+\sum_j \epsilon_{ij}
+\frac{\Delta p_j}{p_j}
+\]
+
+This explicitly captures substitution between taxed and untaxed foods.
+
+**Food demand $\rightarrow$ sodium**
+
+\[
+Na^{tax}
+=
+\sum_j Q_j^{tax} Na_j^{tax}
+\]
+
+Sodium changes arise from both:
+
+- consumer demand response
+- product reformulation
+
+**Sodium $\rightarrow$ health**
+
+Changes in sodium shift the SBP distribution; PIFs translate this shift into disease incidence.
+
+\end{column}
+
+\begin{column}{0.48\textwidth}
+
+Current RTSL implementation
+
+\[
+Tax \rightarrow Price \rightarrow Packaged\ Na
+\rightarrow Total\ Na \rightarrow SBP \rightarrow CVD
+\]
+
+**Tax $\rightarrow$ packaged sodium**
+
+We approximate the packaged-sodium effect as:
+
+\[
+\eta_{pkg}
+=
+\theta_{taxable}
+\left[
+|\epsilon|\tau\pi(1-s)+r_{reform}
+\right]
+\]
+
+where the parameters represent taxable share, elasticity, tax rate, pass-through, substitution, and reformulation.
+
+**Packaged $\rightarrow$ total sodium**
+
+\[
+\Delta Na_{c,t}
+=
+Na^0_c
+\left(
+Share^{pkg}_{c,t}\eta_{pkg}
+\right)
+\]
+
+Country-specific packaged-food shares determine the total sodium effect.
+
+**Sodium $\rightarrow$ health**
+
+The resulting sodium reduction shifts SBP and is propagated through the existing cause-specific CVD model.
+
+\end{column}
+
+\end{columns}
+
+\vspace{0.5em}
+
+\alert{Key distinction:}
+Saxena models food demand and substitution explicitly using QUAIDS; RTSL uses a
+parsimonious, transferable approximation requiring fewer country-specific inputs
+while preserving the pathway tax $\rightarrow$ consumption $\rightarrow$ sodium
+$\rightarrow$ SBP $\rightarrow$ CVD.
+<!-- ======================================================================
+     5. BASELINE AND PROJECTIONS
+     ====================================================================== -->
+
+# Baseline and projections
+
+## Baseline CVD burden, `r N$study_years`
+
+\justifying
+\footnotesize
+
+```{r fig-baseline, out.width="72%"}
+knitr::include_graphics(fig("baseline_asmr"))
+```
+
+\scriptsize Age-standardised mortality (WHO standard, ages 20--95+) declines with forecasted background-mortality and case-fatality trends; absolute CVD deaths still rise with population growth and ageing. Solid = historical, dashed = projected.
+
+## Projected incidence by scenario
+
+\justifying
+\footnotesize
+
+```{r fig-incidence, out.width="100%"}
+knitr::include_graphics(fig("incidence"))
+```
+
+\scriptsize Incident CVD cases per 1,000 (left) and indexed to `r N$scaleup1` = 100 (right). Scenarios coincide until scale-up begins, then fan out; the **full package** falls fastest. **Fiscal now separates from baseline** (applied $\eta$ = `r N$eff_fiscal` on packaged, provisional).
+
+## Projected deaths by scenario
+
+\justifying
+\footnotesize
+
+```{r fig-deaths, out.width="100%"}
+knitr::include_graphics(fig("deaths"))
+```
+
+\scriptsize CVD deaths per 1,000 (left) and indexed to `r N$scaleup1` = 100 (right). Because mortality responds to the **prior** year's incidence, the scenarios' divergence lags the incidence divergence by about a year.
+
+<!-- ======================================================================
+     6. MAIN RESULTS
+     ====================================================================== -->
+
+# Main results
+
+## Deaths delayed by scenario, `r N$impact_window`
+
+\justifying
+\footnotesize
+
+```{r fig-results, out.width="70%"}
+knitr::include_graphics(fig("results_bar"))
+```
+
+\vspace{-0.3em}
+\begin{exampleblock}{Headline}
+\footnotesize
+The \textbf{full package} delays \textbf{`r N$pkg_m` million} CVD deaths across `r N$n_countries` countries (`r N$pkg_pct` of baseline CVD deaths in the window; $\sim$`r N$pkg_per_year_k` thousand/year). \alert{full package does not include LSS}
+\end{exampleblock}
+
+## Deaths delayed by scenario --- detail
+
+\justifying
+\footnotesize
+
+```{r tbl-results, results='asis'}
+tbl("results")
+```
+
+\scriptsize
+The **LSS (Na/K)** scenarios are the largest single levers --- whole-population **s2** `r N$lss_s2_m` M, diagnosed-HTN **s4** `r N$lss_s4_m` M, treated-HTN **s5** `r N$lss_s5_m` M --- because they cut discretionary salt (dominant in the most populous countries) through **both** sodium and potassium. Among the source-split policies, **salt targets** delays the most (`r N$salt_targets_m` M), then **FOPL** (`r N$fopl_m` M), **public procurement** (`r N$public_m` M, provisional) and **fiscal (base)** (`r N$fiscal_m` M, exploratory). The **SSaSS trial-RR benchmark** (stroke-only) gives s4 `r N$lss_s4_ssass_m` M / s5 `r N$lss_s5_ssass_m` M --- lower, as expected for a stroke-only pathway. Media is excluded.
+
+## Full package: deaths delayed by cause
+
+\justifying
+\footnotesize
+
+```{r fig-bycause, out.width="82%"}
+knitr::include_graphics(fig("bycause"))
+```
+
+\scriptsize Ischemic heart disease and stroke dominate the delayed deaths, tracking their share of the baseline CVD burden and their SBP-mediated relative risks.
+
+## Full package: deaths delayed by country
+
+\justifying
+\footnotesize
+
+```{r fig-countries, out.width="70%"}
+knitr::include_graphics(fig("countries"))
+```
+
+\scriptsize Absolute counts are dominated by the most populous countries (China, India); per-capita impact depends on baseline burden and local source structure.
+
+## Benchmark: full package vs.\ the 100M-Lives 30\% sodium cut
+
+\justifying
+\footnotesize
+
+```{r fig-benchmark, out.width="66%"}
+knitr::include_graphics(fig("benchmark"))
+```
+
+<!-- \begin{exampleblock}{Contextual cross-check (not a like-for-like validation)} -->
+\vspace{-0.3em}
+\begin{exampleblock}{Contextual cross-check}
+\footnotesize
+Across the `r N$bench_n` selected countries, the current \textbf{full package} delays \textbf{`r N$bench_current_m` M} CVD deaths vs.\ \textbf{`r N$bench_prev_m` M} for the previous \textbf{100 Million Lives Saved} flat 30\% population sodium reduction ($\approx$\textbf{`r N$bench_ratio`$\times$}). The package delivering less is \emph{expected}: it applies \textbf{source-limited} policy effects, not a uniform 30\% intake cut.
+\end{exampleblock}
+
+<!-- \scriptsize Same four CVD causes and "deaths delayed" outcome; baselines and horizons differ, so the two are compared on order of magnitude and country ranking, not exact equivalence. Previous figures: \texttt{UWRTSL-100MLives\_Output20260204.xlsx} ("Population Sodium Reduction"). -->
+
+<!-- ======================================================================
+     7. LIMITATIONS
+     ====================================================================== -->
+
+# Limitations
+
+## Limitations and interpretation
+
+  <!-- \item \textbf{Hemorrhagic-stroke incidence quirk (pre-existing).} All sodium$\to$SBP scenarios (incl.\ Na/K LSS) inherit a disease-model decomposition quirk that \emph{inflates} hstroke incidence effects and dominates the deaths-delayed totals; the SSaSS benchmark path was corrected for it. \alert{Absolute magnitudes and cross-scenario gaps should be read with caution.} Fixing the root cause is out of scope here. -->
+
+\justifying
+\scriptsize
+
+\begin{itemize}\itemsep=1.5pt
+  \item \textbf{Deaths delayed, not averted.} Case fatality is held at baseline for public procurement, FOPL, salt targets, fiscal \emph{and the primary Na/K$\to$SBP LSS}, so these lower incidence and shift mortality later. Only the optional \textbf{SSaSS trial-RR benchmark} lowers stroke case fatality (averting some stroke deaths).
+  \item \textbf{LSS is benefit-only --- no CKD / hyperkalaemia harm channel} (unlike Huang et al.\ 2026), so LSS benefits are not offset; read as upper-ish where hyperkalaemia risk matters.
+  \item \textbf{LSS inputs.} NCD-RisC eligibility is age-standardised 30--79 (not age-specific); uptake/adherence and whole-population coverage are assumptions; the K$\to$SBP evidence is thinner than Na$\to$SBP and additivity is assumed.
+  \item \textbf{Fiscal policy is exploratory.} Pass-through, elasticity, taxable-packaged share and substitution are uncertain, and transferring broad-category elasticities to high-sodium foods is contested; low/base/high bracket but do not resolve this.
+  \item \textbf{Point estimates.} Input CIs (Euromonitor, fiscal) are shown but \emph{not} propagated into deaths delayed; no probabilistic sensitivity analysis yet.
+  \item \textbf{Provisional source shares \& procurement.} Nigeria/Cameroon are working estimates (Nigeria a proxy for Cameroon); public procurement uses a provisional adults-only share.
+  \item \textbf{Independent-cause structure.} The four causes share one population but are modelled independently.
+\end{itemize}
+
+<!-- ======================================================================
+     8. DISCUSSION AND NEXT STEPS
+     ====================================================================== -->
+
+# Discussion and next steps
+
+## Pending decisions --- for discussion
+
+\justifying
+\scriptsize
+
+\begin{block}{Implemented since July 23 (no longer open)}
+\footnotesize
+\textbf{LSS} --- mechanistic Na/K$\to$SBP is now primary; SSaSS trial RRs are a benchmark only (s4/s5). \quad
+\textbf{Fiscal} --- explicit tax$\to$price$\to$demand pathway with low/base/high sensitivity (exploratory). \quad
+\textbf{Euromonitor} --- country-specific packaged trends.
+\end{block}
+
+\begin{alertblock}{Still open --- for discussion}
+\footnotesize
+\begin{enumerate}
+  \item \textbf{Fiscal parameters} --- tax rate, pass-through, elasticity, `r N$fiscal_taxable_share` taxable-packaged share and substitution are all RTSL-to-confirm. Is the deliberately simple pathway acceptable (fiscal is lowest priority)?
+  \item \textbf{LSS coverage, uptake \& harms} --- confirm s2 coverage and s4/s5 household uptake; and whether to add a CKD/hyperkalaemia harm channel (currently benefit-only).
+  \item \textbf{Euromonitor} --- keep rice/pasta/noodles? what packaged-share ceiling (`r N$euro_ceiling` now; Matti used 50\% for India)? composition-only, or let packaged growth raise total sodium?
+  \item \textbf{Uncertainty} --- propagate input CIs into deaths delayed, or keep point estimates?
+  \item \textbf{Policy framing} --- lives-saved maximization vs.\ a prevention/counterfactual framing (e.g.\ Ethiopia).
+\end{enumerate}
+\end{alertblock}
+
+<!-- \item \textbf{Adults-only procurement shares} --- RTSL per-country values to replace the provisional share. -->
+
+## Next steps and timeline
+
+\justifying
+\footnotesize
+
+- **Built since July 23** --- LSS switched to the mechanistic **Na/K$\to$SBP** primary model (SSaSS a benchmark); fiscal rebuilt as an explicit exploratory pathway with low/base/high sensitivity; Euromonitor moved to country-specific trends; ramp-up `r N$scaleup1`$\to$`r N$scaleup2` confirmed.
+- **Still pending** ---  whether to model LSS/CKD harms; whether to propagate input uncertainty.
+- **Add the economic layer** --- policy costing plus benefit--cost outputs (NPV, BCR) and DALYs; for fiscal, tax revenue and cost-effectiveness (as in Saxena) if it is prioritized.
+- **Primary deliverable** --- the **BP reinvestment proposal** memo (tables + figures), target **August 2026**.
+- **Paper** is secondary; coordinate with Matti on the Bhat/Marklund and Euromonitor inputs to avoid scooping the forthcoming paper.
+
+\medskip
+\begin{block}{Discussion}
+\footnotesize
+With the Na/K LSS and the explicit fiscal pathway now built, where should we push hardest before the reinvestment deliverable --- the pending data, LSS coverage/uptake and possible CKD harms, or the economic layer?
+\end{block}
+
+<!-- ======================================================================
+     APPENDIX — detailed per-intervention methods (verified vs. code)
+     ====================================================================== -->
+
+# Appendix
+
+## Appendix: per-intervention methods
+
+\justifying
+\footnotesize
+
+The following slides document each intervention's **evidence base** and the **applied $\eta$** used in the model. Applied values are produced by `reports/report.RMD` and mirror `code/07_run_interventions.R`; study effect sizes are cited from source.
+
+\medskip
+\scriptsize Also in this appendix: documented source-share values (Table M1) and the per-scenario $\eta$ decomposition by country.
+
+## A. Public food procurement
+
+\footnotesize
+
+**Target source:** public (institutional meals). **Applied $\eta$: `r N$eff_public` of the public source.**
+
+- \textbf{Evidence:} \textcite{gase2011} --- modeling study, LA County. Weighted **--233 mg/day** ($\approx$7% of a 3,329 mg baseline), i.e.\ $\approx$20.6% of public-meal sodium.
+- \textbf{Source adjustment:} for a country with share $x$ of sodium from institutional meals, population impact $= 0.20 \times x$. Worked: Viet Nam $= 0.20\times$`r N$public_share`$=$ `r N$vn_sanity`.
+- \textbf{Share UNDER REVISION (provisional):} the flat `r N$public_share` public share assumed \textbf{school coverage}; this model is \textbf{adults-only}, so the share is being revised \emph{downward}. This run used the stale `r N$public_share` (code ran with \texttt{ADULT\_POPULATION\_ONLY = FALSE}, printing a loud caveat); RTSL owes the adults-only per-country shares. Public-procurement and full-package results are therefore \textbf{provisional}.
+- \textbf{Caveats:} modeled (not observed); US-specific setting; small affected population share.
+
+## B. Behavior change / mass media
+
+\footnotesize
+
+**Target source:** discretionary + packaged. **Applied $\eta$: `r N$eff_media` to each.**
+
+- \textbf{Evidence:} \textcite{do2016} --- COMBI Vietnam, **5%** fall in mean sodium after a 1-year multi-component campaign. \textcite{collins2014} --- UK economic evaluation, **2%** [1--5%].
+- The estimate was revised toward a UK basis; a conservative `r N$eff_media` is applied to each of discretionary and packaged.
+
+\medskip
+\begin{alertblock}{Open question}
+\footnotesize
+RTSL funds \textbf{policy change, not mass media for behavior change} (Laura). Keep this lever in the model, or drop it?
+\end{alertblock}
+
+## C. Low-sodium salt substitutes (LSS)
+
+\footnotesize
+
+**Primary:** mechanistic **Na/K $\to$ SBP $\to$ CVD** (`r N$lss_ratio`), benefit-only. **Benchmark:** SSaSS direct stroke RRs (s4/s5 only).
+
+- \textbf{Na channel:} discretionary sodium cut by KCl fraction $\times$ adherence `r N$lss_adherence` $\times$ uptake `r N$lss_uptake` ($=$ `r N$lss_eff_na_k_disc`); Filippini Na$\to$SBP (2.8 raised-BP / 1.0 normal-BP mmHg/g); WHO 2 g/day floor.
+- \textbf{K channel:} K added stoichiometrically $\to$ excretion (`r N$lss_k_mg_per_mmol` mg/mmol; $\div$`r N$lss_k_intake_excr`) $\to$ Filippini U-curve \autocite{Filippini2020}; baseline-Na modulated; $\times$`r N$lss_nonhtn_factor` in normotensives. Baseline K: Reddin 2023 \autocite{Reddin2023}. Mean $\Delta$SBP (s2) `r N$lss_dsbp_tot` mmHg ($=$ `r N$lss_dsbp_na` Na $+$ `r N$lss_dsbp_k` K).
+- \textbf{Scenarios:} s2 whole population (`r N$lss_cov_all`); s4 diagnosed HTN (`r N$htn_dx_pop`); s5 treated HTN (`r N$htn_tx_pop`) --- s4/s5 from NCD-RisC `r N$htn_source_year`; aligned with Huang et al.\ scenarios 2/4/5 \autocite{huang2026}.
+- \textbf{SSaSS benchmark (s4/s5 only):} stroke incidence RR `r N$lss_rr_stroke_inc` and a conditional case-fatality multiplier `r N$lss_cf_mult` \autocite{Neal2021LSSTrial}; a separate pathway, never combined with Na/K.
+
+## LSS model: parameters, reference values, and sources
+
+\tiny
+
+\[
+\Delta SBP^{LSS}
+=
+\Delta SBP^{Na}
++
+\lambda_K\Delta SBP^{K},
+\qquad
+\Delta Na
+=
+Na_0\,s_D\,q_{KCl}\,a\,u\,c
+\]
+
+\begin{columns}[T]
+
+\begin{column}{0.50\textwidth}
+
+\textbf{LSS composition, exposure, and sodium pathway}
+
+\begin{tabular}{p{0.09\linewidth} p{0.46\linewidth} p{0.17\linewidth} p{0.20\linewidth}}
+\hline
+\textbf{Term} & \textbf{Definition} & \textbf{Value} & \textbf{Source}\\
+\hline
+$Na_0$ & Baseline sodium intake & Country-specific, g/d & Model input\\
+$s_D$ & Share of sodium from discretionary salt & Country/year-specific & Sodium-source data\\
+$q_{NaCl}$ & NaCl mass fraction of LSS & 0.75 & SSaSS \autocite{Neal2021LSSTrial}\\
+$q_{KCl}$ & KCl mass fraction of LSS & 0.25 & SSaSS \autocite{Neal2021LSSTrial}\\
+$u$ & Uptake among reached population & 1.00 & Assumption\\
+$a$ & Adherence: fraction of salt use replaced by LSS & 0.92 & SSaSS yr-5 use \autocite{Neal2021LSSTrial}\\
+$c$ & Population coverage / eligibility & s2: 0.50; s4/s5: country-sex specific & s2 assumption; s4/s5 NCD-RisC 2019\\
+$\eta_{LSS}$ & Fraction of discretionary Na displaced, $q_{KCl}au$ & $0.25\times0.92\times1=0.23$ & Derived\\
+$\beta_{Na}$ & SBP reduction per g/d Na reduction & 2.8 raised BP; 1.0 normal BP & Filippini \autocite{Filippini2021}\\
+$Na_{\min}$ & Minimum sodium intake allowed & 2 g/d & WHO/model constraint\\
+\hline
+\end{tabular}
+
+\end{column}
+
+\begin{column}{0.49\textwidth}
+
+\textbf{Potassium pathway and combination}
+
+\begin{tabular}{p{0.10\linewidth} p{0.43\linewidth} p{0.19\linewidth} p{0.20\linewidth}}
+\hline
+\textbf{Term} & \textbf{Definition} & \textbf{Value} & \textbf{Source}\\
+\hline
+$K_0$ & Baseline potassium intake & Country-sex specific & Reddin 2023 \autocite{Reddin2023}\\
+$M_K$ & Potassium mass per mmol & 39.1 mg/mmol & Molecular mass\\
+$\rho_K$ & Intake-to-24h urinary excretion ratio & 1.3 & Filippini \autocite{Filippini2020}\\
+$r_{Na}$ & Na mass per g NaCl & $22.99/58.44=0.393$ & Stoichiometry\\
+$r_K$ & K mass per g KCl & $39.10/74.55=0.524$ & Stoichiometry\\
+$f_K(x)$ & Achieved K excretion $\to$ SBP curve & U-shaped; ref. 90 mmol/d & Filippini \autocite{Filippini2020}\\
+$m_{Na}$ & Modification of K effect by baseline Na & 0.8 / 1.0 / 1.2 & Filippini/Huang-based assumption\\
+$\gamma_N$ & K-effect multiplier in normotensive BP bins & 0.50 & Assumption\\
+$\lambda_K$ & Weight on K-mediated SBP effect & 1.00 & Additivity assumption\\
+$RR_{10,c}$ & CVD RR per 10-mmHg SBP reduction, cause $c$ & Cause-specific & Ettehad \autocite{ettehad2016}\\
+\hline
+\end{tabular}
+
+\end{column}
+\end{columns}
+
+<!-- \vspace{0.25em} -->
+<!-- \tiny -->
+<!-- \textit{Implementation details:} -->
+<!-- $f_K(x)$ is piecewise-linear through $(30,9.1),(60,3.9),(90,0),(120,-0.9),(150,-0.2),(180,0.7)$ -->
+<!-- (mmol/d, mmHg). $m_{Na}=0.8$ for $Na_0<3$, $1.0$ for 3--$<5$, and $1.2$ for $\geq5$ g/d. -->
+<!-- Na- and K-mediated SBP reductions are added and passed through the same cause-specific SBP$\to$CVD incidence model. -->
+<!-- Case fatality is unchanged; CKD/hyperkalaemia harms are not currently modeled \autocite{huang2026}. -->
+
+## D. Front-of-pack labeling
+
+\footnotesize
+
+**Target source:** packaged (estimate already from packaged-food purchases). **Applied $\eta$: `r N$eff_fopl` of packaged.**
+
+- \textbf{Evidence:} \textcite{taillie2024} --- Chile's mandatory warning-label law (observed). **--73.3 mg/capita/day (--13.8%)** in sodium purchases (2,844 households, 2013--2019).
+- \textbf{Caveat:} purchases-to-intake translation is uncertain.
+- \textbf{Alternative:} Mexico found $\approx$ --7% in packaged sales ($\approx$ --38 mg/capita/day).
+
+## E. Mandatory salt targets (reformulation)
+
+\footnotesize
+
+**Target source:** packaged. **Applied $\eta$: `r N$eff_salttargets` of packaged** (conservative; 15% floor for sensitivity).
+
+- \textbf{Policy:} South African mandatory maximum sodium limits (2013; targets implemented 2016 and 2019).
+- \textbf{Evidence:} \textcite{strausskruger2022} --- African-PREDICT, **--15.2%** sodium; baseline/follow-up straddle the target dates, so likely an **underestimate**.
+- \textbf{Alternatives:} \autocite{gaziano2025} --8.4% (rural, spot urine); \autocite{charlton2021} --18.4%; UK \autocite{he2013,song2023}; Mexico modeling \autocite{mucinosandoval2025}.
+
+## F. Fiscal policy / taxation (exploratory)
+
+\footnotesize
+
+**Target source:** packaged. **Applied $\eta$ (base): `r N$eff_fiscal` of packaged --- exploratory, lowest priority.**
+
+- \textbf{Anchor:} \textcite{saxena2025} --- Philippines, modeled `r N$saxena_tax` tax on unhealthy packaged foods; `r N$saxena_na_red` sodium at year 20.
+- \textbf{Pathway (base):} `r N$fiscal_tax_rate` tax $\times$ `r N$fiscal_pass_through` pass-through $=$ `r N$fiscal_price_change` price rise $\times$ elasticity `r N$fiscal_elasticity` $\Rightarrow$ `r N$fiscal_taxed_pkg_red` fewer taxed products $\times$ `r N$fiscal_taxable_share` taxable share $\Rightarrow$ `r N$fiscal_pkg_red` of packaged sodium.
+- \textbf{Sensitivity} (packaged-sodium reduction): `r N$fiscal_low_pkg` (low) / `r N$fiscal_pkg_red` (base) / `r N$fiscal_high_pkg` (high).
+- \textbf{Alternatives / evidence:} India \autocite{roche2026}; Australia \autocite{davies2026,cobiac2017}; broad-category price elasticities \autocite{Green2013}; systematic review \autocite{dodd2020} (1--11\% reduction).
+
+## Appendix: sodium source shares --- documented values
+
+\scriptsize
+\vspace{-0.4em}
+
+```{r tbl-source-shares, results='asis'}
+tbl("source_shares")
+```
+
+\scriptsize Fractions of total intake, renormalised to 1.0. The `default` row (mean of the ten) applies to any country without its own row. These are the **2024** shares; the packaged share then grows on the Euromonitor trend (next slide).
+
+## Appendix: packaged-food trend (Euromonitor)
+
+\scriptsize
+
+The packaged \emph{share} follows a **country-specific** Euromonitor 2025--2030 prediction --- a pre-combined per-country growth rate (with 95\% CI) over the sodium-relevant categories --- grown to a 2030 end-state and **held flat after**. Total intake is unchanged; only \emph{where} sodium comes from shifts. Median growth $\approx$ `r N$pkg_apc_median`/yr (range `r N$pkg_apc_range`), capped at `r N$euro_ceiling`.
+
+```{r tbl-packaged-trend, results='asis'}
+tbl("packaged_trend")
+```
+
+\scriptsize Source: Euromonitor (`Euromonitor_trends_RTSL_v002.xlsx`, Marklund). Category selection (incl.\ whether to keep rice/pasta/noodles) and the packaged-share ceiling are RTSL-to-confirm.
+
+<!-- ## Appendix: packaged share of sodium over time -->
+
+<!-- \footnotesize -->
+
+<!-- Each country's packaged share grows on its own Euromonitor trend to a 2030 end-state, then holds flat (dashed line $=$ the `r N$euro_ceiling` ceiling). The other four sources renormalise each year --- a composition shift only. -->
+
+<!-- ```{r fig-packaged-time, out.width="80%"} -->
+<!-- knitr::include_graphics(fig("packaged_time")) -->
+<!-- ``` -->
+
+## Appendix: $\eta$ decomposition by scenario and country
+
+\footnotesize
+
+```{r fig-salteff, out.width="80%"}
+knitr::include_graphics(fig("salteff"))
+```
+
+\scriptsize Per-scenario `salteff` for every country, stacked by source contribution (note free y-axes). Fiscal now contributes a `r N$eff_fiscal` reduction of the packaged source (provisional).
+
+<!-- ======================================================================
+     REFERENCES  (biblatex auto-prints the bibliography after this section)
+     ====================================================================== -->
+
+# References
+
+## References
+
+\tiny

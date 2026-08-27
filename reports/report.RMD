@@ -792,15 +792,27 @@ The per-eligible-and-adherent-person pathway is:
 2. **Sodium channel.** The displaced discretionary sodium feeds the **existing
    Filippini Na→SBP dose-response** (2.8 mmHg/g raised-BP, 1.0 mmHg/g normal-BP),
    subject to the WHO 2 g/day floor.
-3. **Potassium channel.** Baseline K intake (g/day, Reddin 2023) and the K added
-   by LSS are converted to **achieved excretion (mmol/day)** — mg↔mmol via
-   `r RC$lss$k_mg_per_mmol` mg/mmol, intake→excretion via ÷`r RC$lss$k_intake_to_excretion`
-   — and mapped to an SBP change with the Filippini U-shaped achieved-excretion
-   curve (reference 90 mmol/day), evaluated at baseline vs post-LSS excretion and
-   differenced. The effect is modulated by baseline sodium (stronger at higher
-   sodium) and **attenuated in normotensives** (factor
-   `r formatC(RC$lss$nonhtn_factor, format="f", digits=2)`;
-   `r if (isTRUE(RC$lss$nonhtn_attenuation)) "enabled" else "disabled"`).
+3. **Potassium channel (Filippini Figure 2 + Figure S16).** Baseline potassium
+   intake (g/day, Reddin 2023) is converted to **baseline 24-hour urinary
+   potassium** $uK_0$ (mmol/day), and the potassium added by LSS to a **change in
+   urinary potassium** $\Delta uK$ (mmol/day), both via
+   $\text{mmol/day} = \text{g/day}\times 1000 / (`r RC$lss$k_mg_per_mmol`\times`r RC$lss$k_intake_to_excretion`)$
+   (mg↔mmol by `r RC$lss$k_mg_per_mmol` mg/mmol; the ÷`r RC$lss$k_intake_to_excretion`
+   intake→excretion factor is applied **only** because these are dietary values,
+   never to a quantity that is already urinary). $\Delta uK$ is mapped to an SBP
+   change with the Filippini (2020) **Figure 2 change-in-urinary-potassium**
+   dose-response (maximum estimated benefit near a 30 mmol/day rise; crossing
+   approximately zero near
+   `r formatC(RC$lss$delta_uk_zero_crossing, format="f", digits=1)` mmol/day, with
+   an imprecise, **non-truncated** adverse arm above it). That population-average
+   effect is then scaled by the Filippini **Figure S16 baseline-potassium subgroup
+   multiplier** $m_K(uK_0)$:
+   `r formatC(RC$lss$baseline_uk_mult_low, format="f", digits=3)` for
+   potassium-**deficient** populations ($uK_0 < `r RC$lss$baseline_uk_threshold`$
+   mmol/day) and `r formatC(RC$lss$baseline_uk_mult_high, format="f", digits=3)`
+   (a smaller central effect, **not** zero) for potassium-**replete** populations
+   ($uK_0 \ge `r RC$lss$baseline_uk_threshold`$ mmol/day). The 75 mmol/day urinary
+   threshold ≈ 2.93 g/day urinary ≈ 3.81 g/day dietary potassium.
 4. **Combine.** The Na- and K-mediated SBP changes are combined
    **`r if (isTRUE(RC$lss$additive)) "additively" else "non-additively"`**
    (additivity factor `r formatC(RC$lss$additivity_factor, format="f", digits=2)`;
@@ -810,16 +822,23 @@ The per-eligible-and-adherent-person pathway is:
 ```{r lss-constants, message=FALSE, warning=FALSE, echo=FALSE}
 lss_const <- data.table(
   Parameter = c("NaCl fraction", "KCl fraction", "Uptake", "Adherence",
-                "Additive?", "Additivity factor", "Non-HTN K attenuation",
+                "Additive?", "Additivity factor",
+                "Baseline urinary-K threshold (mmol/day)",
+                "m_K (uK0 < 75; potassium-deficient)",
+                "m_K (uK0 ≥ 75; potassium-replete)",
+                "ΔuK zero-crossing (mmol/day)",
                 "mg per mmol K", "Intake→excretion factor",
                 "Whole-population coverage (s2)", "Harms modelled"),
   Value = c(fmt_pct(RC$lss$nacl_fraction,0), fmt_pct(RC$lss$kcl_fraction,0),
             formatC(RC$lss$uptake,format="f",digits=2), formatC(RC$lss$adherence,format="f",digits=2),
             as.character(RC$lss$additive), formatC(RC$lss$additivity_factor,format="f",digits=2),
-            paste0(RC$lss$nonhtn_attenuation, " (x", formatC(RC$lss$nonhtn_factor,format="f",digits=2), ")"),
+            as.character(RC$lss$baseline_uk_threshold),
+            formatC(RC$lss$baseline_uk_mult_low,  format="f", digits=3),
+            formatC(RC$lss$baseline_uk_mult_high, format="f", digits=3),
+            formatC(RC$lss$delta_uk_zero_crossing, format="f", digits=1),
             as.character(RC$lss$k_mg_per_mmol), as.character(RC$lss$k_intake_to_excretion),
             formatC(RC$lss$coverage_all,format="f",digits=2), RC$lss$harms_modelled))
-kable(lss_const, caption = "Table M3a. LSS Na/K→SBP parameters (from run_config.rds).",
+kable(lss_const, caption = "Table M3a. LSS Na/K→SBP parameters (from run_config.rds; potassium submethod: Filippini Fig 2 ΔuK × Fig S16 baseline-uK subgroup).",
       align = c("l","r")) |>
   kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE, font_size = 13) |>
   row_spec(0, bold = TRUE)
@@ -904,17 +923,21 @@ if (nrow(la_s2)) {
     Country = location, Sex = sex,
     `Base Na (g)` = formatC(baseline_sodium_g, format="f", digits=2),
     `Base K (g)`  = formatC(baseline_potassium_g, format="f", digits=2),
-    `Disc share`  = fmt_pct(discretionary_share,0),
-    `Cov`         = fmt_pct(eligible_pop_share,0),
+    `uK0 (mmol)`  = formatC(baseline_urinary_potassium_mmol, format="f", digits=1),
+    `K group`     = baseline_uk_group,
+    `mK`          = formatC(baseline_uk_multiplier, format="f", digits=3),
     `Na displ (g)` = formatC(sodium_displaced_g, format="f", digits=3),
     `K added (g)`  = formatC(potassium_added_g, format="f", digits=3),
+    `ΔuK (mmol)`   = formatC(delta_urinary_potassium_mmol, format="f", digits=2),
     `ΔSBP Na` = formatC(sbp_delta_na_mmHg, format="f", digits=2),
     `ΔSBP K`  = formatC(sbp_delta_k_mmHg, format="f", digits=2),
     `ΔSBP tot` = formatC(sbp_delta_combined_mmHg, format="f", digits=2))]
   kable(la_tbl, caption = paste0("Table M3d. LSS Na/K→SBP pathway (scenario 2, whole-population, ",
-        .s2_rep_cov, " coverage) by country × sex. Harms modelled: none (no CKD channel). ",
+        .s2_rep_cov, " coverage) by country × sex. uK0 = baseline 24-h urinary K; ",
+        "K group / mK = Filippini Fig S16 baseline-K subgroup & multiplier; ΔuK = change in ",
+        "urinary K; ΔSBP K is the Fig-2 effect × mK. Harms modelled: none (no CKD channel). ",
         "Causes affected: all four CVD. Composition scales linearly with coverage."),
-        align = c("l","l", rep("r",8))) |>
+        align = c("l","l", rep("r",11))) |>
     kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = TRUE, font_size = 11) |>
     row_spec(0, bold = TRUE)
 } else cat("No na_k_sbp LSS rows in lss_audit.rds.\n")
@@ -976,9 +999,12 @@ huang_cmp <- data.frame(
     paste0(n_countries, " RTSL priority countries"),
     paste0(fmt_pct(lc$nacl_fraction, 0), " NaCl / ", fmt_pct(lc$kcl_fraction, 0), " KCl"),
     "Filippini Na→SBP (2.8 mmHg/g raised-BP; 1.0 mmHg/g normal-BP); WHO 2 g/day floor",
-    paste0("Filippini 2020 achieved-excretion U-curve; baseline-Na modulation; non-HTN ×",
-           formatC(lc$nonhtn_factor, format = "f", digits = 2), "; additive"),
-    "Reddin 2023 (country × sex; region-mean fallback: Viet Nam, Ethiopia)",
+    paste0("Filippini 2020 Fig 2 change-in-urinary-K dose-response × Fig S16 baseline-uK subgroup (m_K = ",
+           formatC(lc$baseline_uk_mult_low, format = "f", digits = 3), " if uK0<",
+           lc$baseline_uk_threshold, "; ",
+           formatC(lc$baseline_uk_mult_high, format = "f", digits = 3), " if ≥); additive"),
+    paste0("Reddin 2023 (country × sex; region-mean fallback: Viet Nam, Ethiopia); ",
+           "converted to baseline urinary K and used for the Fig S16 subgroup"),
     "3: whole-population discretionary (s2), diagnosed HTN (s4), treated HTN (s5) — Huang's 2/4/5",
     paste0("NCD-RisC ", RC$htn_source_year,
            " diagnosed/treated population shares; uptake ",
@@ -1001,6 +1027,33 @@ kable(huang_cmp,
   row_spec(0, bold = TRUE) |>
   column_spec(1, bold = TRUE)
 ```
+
+Note the specific way the two models let the potassium effect vary. **Huang et al.
+already allowed the potassium→SBP effect to vary with baseline _sodium_** (their
+Filippini-based curve is stronger at higher baseline sodium). The distinguishing
+update in this implementation is the explicit use of **country- and sex-specific
+baseline _potassium_ status**: the Filippini (2020) Figure 2 change-in-urinary-K
+dose-response scaled by the Figure S16 baseline urinary-K subgroup estimates
+(larger effect where potassium intake is low, smaller — but non-zero — where it is
+replete). The previous UW/RTSL implementation carried Huang's baseline-sodium
+modulation (plus a non-hypertensive attenuation); those are retired here so that
+baseline heterogeneity is represented once, by baseline potassium, as Filippini
+estimated it.
+
+### Change from the previous LSS implementation
+
+The potassium pathway was revised so that baseline heterogeneity is carried by
+baseline **potassium** status (Filippini's own subgroup evidence) rather than by
+baseline sodium and blood-pressure modifiers. The sodium channel and the additive
+combination are unchanged.
+
+| Element | Previous implementation | Implemented version |
+|---|---|---|
+| Potassium exposure-response | Figure 3 achieved-excretion curve evaluated at baseline and post-LSS | Figure 2 change-in-urinary-potassium curve |
+| Baseline heterogeneity | Continuous baseline level through achieved-excretion curve, plus sodium and BP modifiers | Figure S16 baseline urinary potassium `<75` vs `≥75 mmol/day` |
+| Potassium subgroup multipliers | Baseline-sodium bands and non-hypertensive attenuation | `r formatC(RC$lss$baseline_uk_mult_low, format="f", digits=4)` for `<75`; `r formatC(RC$lss$baseline_uk_mult_high, format="f", digits=4)` for `≥75` |
+| Sodium channel | Existing sodium-reduction-to-SBP calculation | Unchanged |
+| Combination | Additive Na + K, 80% sensitivity hook | Unchanged |
 
 ## LSS: Huang et al. (2026) vs. our current implementation
 
@@ -1068,14 +1121,19 @@ LSS displaces discretionary sodium:
 Na^0\,q_D(0.25)(0.92)(u)(c_t)
 \]
 
-and adds potassium stoichiometrically:
+and adds potassium stoichiometrically, converted to a change in 24-h urinary
+potassium ($\Delta uK$, mmol/day):
 
 \[
 \Delta K
 =
 \Delta Na
 \frac{0.524}{0.393}
-\approx1.33\,\Delta Na
+\approx1.33\,\Delta Na,
+\qquad
+\Delta uK
+=
+\frac{\Delta K \times 1000}{39.1\times1.3}
 \]
 
 SBP reduction is:
@@ -1087,14 +1145,22 @@ SBP reduction is:
 \]
 
 \[
+\Delta SBP_K
+=
+[-g(\Delta uK)]\;m_K(uK_0),
+\qquad
 \Delta SBP
 =
 \Delta SBP_{Na}
 +
-m_{Na}\,m_H\,\Delta SBP_K
+a\,\Delta SBP_K
 \]
 
-where $\Delta SBP_K$ comes from the Filippini K-excretion curve.
+where $g$ is the Filippini (2020) **Figure 2** change-in-urinary-potassium curve
+(treated$-$control SBP; negative $=$ lowering), $m_K(uK_0)$ the **Figure S16**
+baseline urinary-potassium subgroup multiplier ($1.11$ if $uK_0<75$, $0.82$ if
+$\ge 75$ mmol/day), and $a$ the additivity factor ($1.0$ primary; $0.8$
+sensitivity).
 
 Rather than a PIF, $\Delta SBP$ modifies annual incidence:
 
@@ -2484,10 +2550,16 @@ not as a validation target.
   and adherence (SSaSS yr-5 ≈ 0.92) are assumptions; the whole-population coverage
   (s2) is a manual toggle. Household spillover is not modelled.
 - **K→SBP evidence is sparser than Na→SBP, and additivity is assumed.** The
-  potassium channel uses the Filippini (2020) achieved-excretion dose-response
-  with unit-conversion assumptions (39.1 mg/mmol; intake→excretion ÷1.3) and a
-  baseline-sodium modulation; the sodium- and potassium-mediated SBP changes are
-  **assumed additive** (a factor lets this be relaxed). The K evidence base is
+  potassium channel uses the Filippini (2020) **Figure 2 change-in-urinary-K**
+  dose-response with unit-conversion assumptions (39.1 mg/mmol; intake→excretion
+  ÷1.3) and the **Figure S16 baseline urinary-K subgroup** modifier (`<75` vs
+  `≥75` mmol/day). The subgroup evidence is **study-level** (not individual), the
+  two-group split is coarse, and the **high-ΔuK end of the curve is imprecise**
+  (it can turn adverse above ≈79 mmol/day, though realised ΔuK here is far below
+  that). The baseline-uK modifier and the ΔuK dose-response are **not jointly
+  estimated** with each other or with baseline sodium, so their combination is an
+  assumption. The sodium- and potassium-mediated SBP changes are **assumed
+  additive** (a factor lets this be relaxed to 80%). The K evidence base is
   thinner than for sodium.
 - **LSS is benefit-only — no hyperkalaemia/CKD harm channel.** Unlike Huang et
   al., this disease model has no CKD state, so LSS benefits are **not offset** by
@@ -2921,15 +2993,23 @@ nums <- list(
   fiscal_high_pkg      = fmt_pct(fa_high$packaged_reduction, 1),
   fiscal_low_m         = fmt_m(ddc("fiscal_low"), 2),
   fiscal_high_m        = fmt_m(ddc("fiscal_high"), 2),
-  # LSS Na/K→SBP detail (representative means over whole-population s2 rows)
+  # LSS Na/K→SBP detail (representative means over whole-population s2 rows).
+  # UPDATED: the retired non-HTN attenuation num is replaced by the Fig-S16
+  # baseline urinary-K threshold + subgroup multipliers that now carry the
+  # baseline-potassium heterogeneity.
   lss_uptake           = formatC(RC$lss$uptake, format = "f", digits = 2),
-  lss_nonhtn_factor    = formatC(RC$lss$nonhtn_factor, format = "f", digits = 2),
+  lss_uk_threshold     = as.character(RC$lss$baseline_uk_threshold),
+  lss_uk_mult_low      = formatC(RC$lss$baseline_uk_mult_low,  format = "f", digits = 3),
+  lss_uk_mult_high     = formatC(RC$lss$baseline_uk_mult_high, format = "f", digits = 3),
+  lss_delta_uk_zero    = formatC(RC$lss$delta_uk_zero_crossing, format = "f", digits = 1),
   lss_eff_na_k_disc    = fmt_pct(RC$lss$eff_lss_na_k_discretionary, 0),
   lss_k_mg_per_mmol    = as.character(RC$lss$k_mg_per_mmol),
   lss_k_intake_excr    = as.character(RC$lss$k_intake_to_excretion),
   lss_dsbp_na          = formatC(mean(la_dk$sbp_delta_na_mmHg,       na.rm = TRUE), format = "f", digits = 2),
   lss_dsbp_k           = formatC(mean(la_dk$sbp_delta_k_mmHg,        na.rm = TRUE), format = "f", digits = 2),
   lss_dsbp_tot         = formatC(mean(la_dk$sbp_delta_combined_mmHg, na.rm = TRUE), format = "f", digits = 2),
+  lss_uk0_mmol         = formatC(mean(la_dk$baseline_urinary_potassium_mmol, na.rm = TRUE), format = "f", digits = 1),
+  lss_delta_uk         = formatC(mean(la_dk$delta_urinary_potassium_mmol,    na.rm = TRUE), format = "f", digits = 2),
   lss_na_disp          = formatC(mean(la_dk$sodium_displaced_g,      na.rm = TRUE), format = "f", digits = 2),
   lss_k_add            = formatC(mean(la_dk$potassium_added_g,       na.rm = TRUE), format = "f", digits = 2),
   # published media effect (retained in registry; excluded from reported scenarios)
@@ -3561,7 +3641,7 @@ key_inputs <- data.frame(
     "Sodium-to-SBP slope (raised BP / normal BP)", "Minimum sodium floor",
     "LSS composition (NaCl / KCl)", "LSS adherence", "LSS uptake among reached",
     "K added per g Na displaced", "K unit conversion (mg/mmol; intake→excretion)",
-    "Non-hypertensive K attenuation", "Whole-population LSS coverage sweep",
+    "Baseline urinary-K subgroup (threshold; low / high multiplier)", "Whole-population LSS coverage sweep",
     "Packaged trend base year / ceiling / post-2030",
     "Fiscal base (tax / pass-through / elasticity / taxable share)"),
   Value = c(as.character(n_pri), as.character(RC$analysis_years[1]), "2019 (pre-pandemic)",
@@ -3575,7 +3655,9 @@ key_inputs <- data.frame(
     formatC(RC$lss$uptake, format = "f", digits = 2),
     paste0("≈", formatC(RC$lss$k_per_g_kcl / RC$lss$na_per_g_nacl, format = "f", digits = 2), " g"),
     paste0(RC$lss$k_mg_per_mmol, " ; ÷", RC$lss$k_intake_to_excretion),
-    paste0("×", formatC(RC$lss$nonhtn_factor, format = "f", digits = 2)),
+    paste0(RC$lss$baseline_uk_threshold, " mmol/day; ×",
+           formatC(RC$lss$baseline_uk_mult_low,  format = "f", digits = 3), " / ×",
+           formatC(RC$lss$baseline_uk_mult_high, format = "f", digits = 3)),
     paste0(paste(round(100 * s2_reg$cov), collapse = ", "), "%"),
     paste0("base ", RC$euromonitor$base_year, "; ceiling ", pct(RC$euromonitor$ceiling, 0), "; ", .euro_post2030),
     paste0(pct(RC$fiscal$base$tax_rate, 0), " / ", pct(RC$fiscal$base$pass_through, 0), " / ",
