@@ -36,24 +36,69 @@ TR <- readRDS(file.path(assets, "tr_bundle.rds"))
 N  <- TR$nums
 fig_path <- function(key) file.path(assets, TR$fig[[key]]$file)
 
+# Brand styling comes from the bundle (single palette defined in reports/report.RMD).
+STY <- if (!is.null(TR$style)) TR$style else
+  list(header_bg = "#382986", header_fg = "#FFFFFF", band = "#F5F6FC")
+
+# ---- identifiers, titles, notes and internal links (all metadata from bundle) ----
+# Human-readable identifiers ("Table 3", "Figure 6") are kept SEPARATE from the
+# Word-safe bookmark names ("tbl_countries", "fig_map") the bundle stores.
+fig_ref   <- function(key) TR$fig[[key]]$id                       # e.g. "Figure 6"
+tab_ref   <- function(key) TR$tab[[key]]$id                       # e.g. "Table 3"
+# (Comment 2) Clickable internal cross-references: visible identifier -> bookmark
+# anchor. Emitted as Markdown links so pandoc makes real Word hyperlinks.
+fig_link  <- function(key) paste0("[", TR$fig[[key]]$id, "](#", TR$fig[[key]]$bkm, ")")
+tab_link  <- function(key) paste0("[", TR$tab[[key]]$id, "](#", TR$tab[[key]]$bkm, ")")
+# The title paragraph (above the figure/table) carries the target bookmark via a Pandoc
+# span id, so links land on the title itself, not a nearby heading. Tables use the SAME
+# mechanism as figures because flextable's run_autonum(bkm=) does not emit a bookmark that
+# a Markdown link can target in this toolchain (verified against the rendered OOXML).
+fig_title <- function(key)
+  paste0("**[", TR$fig[[key]]$id, ". ", TR$fig[[key]]$title, "]{#", TR$fig[[key]]$bkm, "}**")
+tab_title <- function(key)
+  paste0("**[", TR$tab[[key]]$id, ". ", TR$tab[[key]]$title, "]{#", TR$tab[[key]]$bkm, "}**")
+
+# Notes (plain paragraph) then, on a separate line, a bold standardized Source line.
+# The source is not duplicated inside the notes; the block itself is not italic/bold.
+.mk_note <- function(o) {
+  g <- function(nm) { v <- o[[nm]]; if (!is.null(v) && nzchar(v)) v else NULL }
+  bits <- c(g("notes"),
+            if (!is.null(g("population"))) paste0("Population: ", o$population, "."),
+            if (!is.null(g("period")))     paste0("Period: ", o$period, "."),
+            if (!is.null(g("units")))      paste0("Units: ", o$units, "."),
+            if (!is.null(g("scenario_def"))) o$scenario_def,
+            if (!is.null(g("rounding")))   paste0("Rounding: ", o$rounding, "."))
+  body <- paste(bits, collapse = " ")
+  body <- gsub("\\.\\.+", ".", body)            # collapse doubled periods
+  body <- gsub("\\.\\s*\\.", ".", body)
+  src  <- if (!is.null(g("source"))) paste0("**Source: ", o$source, ".**") else ""
+  paste0("Notes: ", body, "\n\n", src)
+}
+tab_note <- function(key) .mk_note(TR$tab[[key]])
+fig_note <- function(key) .mk_note(TR$fig[[key]])
+
 # ---- one table renderer, two output formats --------------------------------
-# `key` looks up the bundle; `id` is the chunk-label / bookmark / cross-ref target
-# (must equal the chunk label so \@ref(tab:id) resolves in both Word and PDF).
+# The table's numbered title + bookmark is rendered ABOVE the table by tab_title()
+# (a Pandoc span, like figures), which tab_link() targets, so every in-text table
+# citation is a real internal hyperlink. The table itself therefore carries NO caption
+# (no duplicate title).
 .is_num_col <- function(x) {
   x <- trimws(as.character(x)); x <- x[nzchar(x)]
   if (!length(x)) return(FALSE)
   mean(grepl("^[-–−(]?[0-9][0-9,.]*%?\\)?$", x)) > 0.6
 }
 tr_tab <- function(key, id = gsub("_", "-", key)) {
-  tb  <- TR$tab[[key]]; df <- tb$display; cap <- paste0(tb$title, ".")
+  tb  <- TR$tab[[key]]; df <- tb$display
   wide <- ncol(df) >= 6 || identical(tb$orientation, "landscape")
   numcol <- vapply(df, .is_num_col, logical(1)); numcol[1] <- FALSE
   al <- ifelse(numcol, "r", "l")
   if (knitr::is_latex_output()) {
-    k <- kbl(df, booktabs = TRUE, caption = cap, linesep = "", align = al) |>
-      kable_styling(latex_options = c("striped", "hold_position",
-        if (wide) "scale_down" else NULL), font_size = tb$fontsize,
-        full_width = FALSE)
+    # scale_down wraps the table in \resizebox, which only shrinks when the table is
+    # wider than the line (a no-op otherwise), so it is safe to apply to every table
+    # and prevents long-header tables (e.g. the countries table) from overflowing.
+    k <- kbl(df, booktabs = TRUE, linesep = "", align = al) |>
+      kable_styling(latex_options = c("striped", "hold_position", "scale_down"),
+        font_size = tb$fontsize, full_width = FALSE)
     # Wrap a long text first column so narrow tables do not overflow the page.
     if (!wide && max(nchar(df[[1]]), na.rm = TRUE) > 30)
       k <- column_spec(k, 1, width = "16em")
@@ -63,36 +108,126 @@ tr_tab <- function(key, id = gsub("_", "-", key)) {
     k
   } else {
     ft <- flextable(df)
-    ft <- set_caption(ft, caption = cap,
-            autonum = run_autonum(seq_id = "tab", pre_label = "Table ", bkm = id))
     ft <- theme_booktabs(ft)
-    ft <- bg(ft, part = "header", bg = "#1F4E5F")
-    ft <- color(ft, part = "header", color = "white")
+    ft <- bg(ft, part = "header", bg = STY$header_bg)
+    ft <- color(ft, part = "header", color = STY$header_fg)
     ft <- bold(ft, part = "header")
+    # Restrained zebra banding for readability (does not carry meaning on its own).
+    if (nrow(df) > 2) {
+      even <- seq(2, nrow(df), by = 2)
+      ft <- bg(ft, i = even, bg = STY$band, part = "body")
+    }
     ft <- fontsize(ft, size = tb$fontsize, part = "all")
-    ft <- padding(ft, padding = 2, part = "all")
+    ft <- padding(ft, padding = 3, part = "all")
     if (any(numcol)) ft <- align(ft, j = which(numcol), align = "right", part = "all")
     ft <- align(ft, j = which(!numcol), align = "left", part = "body")
     ft <- align(ft, part = "header", align = "center")
     ft <- valign(ft, valign = "top", part = "body")
     if (grepl("^Total", tail(df[[1]], 1))) ft <- bold(ft, i = nrow(df), part = "body")
-    set_table_properties(ft, layout = "autofit", width = 1)
+    ft <- set_table_properties(ft, layout = "autofit", width = 1)
+    ft <- flextable::fix_border_issues(ft)
+    ft
   }
 }
-tab_note <- function(key) {
-  tb <- TR$tab[[key]]
-  bits <- c(if (nzchar(tb$units)) paste0("Units: ", tb$units),
-            if (nzchar(tb$period)) paste0("Period: ", tb$period),
-            if (nzchar(tb$rounding)) paste0("Rounding: ", tb$rounding),
-            if (nzchar(tb$source)) paste0("Source: ", tb$source),
-            if (nzchar(tb$notes)) tb$notes)
-  paste0("*", paste(bits, collapse = " "), "*")
+```
+
+```{r tr-assertions, include=FALSE}
+# Report-level QA. These run at render time and STOP the build if an invariant the
+# report depends on is violated (missing element, empty title, broken removal, etc.).
+.fail <- function(msg) stop("technical-report QA assertion failed: ", msg, call. = FALSE)
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# 1. Every ordered table/figure key exists in the bundle.
+for (k in TR$table_order)  if (is.null(TR$tab[[k]])) .fail(paste("missing table", k))
+for (k in TR$figure_order) if (is.null(TR$fig[[k]])) .fail(paste("missing figure", k))
+
+# 2. Every table/figure has a non-empty title.
+for (k in TR$table_order)  if (!nzchar(TR$tab[[k]]$title)) .fail(paste("empty title, table", k))
+for (k in TR$figure_order) if (!nzchar(TR$fig[[k]]$title)) .fail(paste("empty title, figure", k))
+
+# 3. Every element has a substantive note and/or source.
+.has_note <- function(o) any(nzchar(c(o$notes, o$source, o$units, o$period, o$scenario_def)))
+for (k in TR$table_order)  if (!.has_note(TR$tab[[k]])) .fail(paste("no note/source, table", k))
+for (k in TR$figure_order) if (!.has_note(TR$fig[[k]])) .fail(paste("no note/source, figure", k))
+
+# 4. Figure/table numbers follow appearance order.
+if (!identical(unname(vapply(TR$figure_order, function(k) TR$fig[[k]]$num, integer(1))),
+               seq_along(TR$figure_order))) .fail("figure numbering not in appearance order")
+if (!identical(unname(vapply(TR$table_order,  function(k) TR$tab[[k]]$num, integer(1))),
+               seq_along(TR$table_order)))  .fail("table numbering not in appearance order")
+
+# 5. Comments D/E/G: state figure present; fiscal-pathway and by-cause figures removed.
+if (!("state_transition" %in% TR$figure_order)) .fail("comment D: state-transition figure missing")
+if ("fiscal_pathway" %in% TR$figure_order)      .fail("comment E: fiscal-pathway figure not removed")
+if ("bycause" %in% TR$figure_order)             .fail("comment G: by-cause figure not removed")
+
+# 6. Comments E/G: fiscal-path and by-cause TABLES retained.
+if (!("fiscal_path" %in% TR$table_order)) .fail("comment E: fiscal pathway table missing")
+if (!("bycause" %in% TR$table_order))     .fail("comment G: by-cause table missing")
+
+# 7. Comment F: countries figure is a Pareto whose cumulative share ends at 100%.
+.cty <- TR$fig$countries$data
+if (is.null(.cty) || is.null(.cty$cumulative_share)) .fail("comment F: countries figure lacks cumulative share (not a Pareto)")
+if (abs(tail(.cty$cumulative_share, 1) - 1) > 0.01)  .fail("comment F: Pareto cumulative share does not end at 100%")
+
+# 8. Comment B: no residual media-campaign text anywhere in the bundle.
+if (grepl("\\bmedia\\b", tolower(paste(unlist(TR), collapse = " | ")))) .fail("comment B: residual media text in bundle")
+
+# 9. Country table (comments 3, 4): SBP labelled 2026, NCD-RisC attribution, DISTINCT
+#    raised-BP and NCD-RisC 2021 hypertension columns, and 2026 (not 2030) population.
+.cn <- TR$tab$countries; .nm <- names(.cn$display)
+if (!any(grepl("SBP", .nm) & grepl("2026", .nm))) .fail("comment A: SBP column not labelled 2026")
+if (!grepl("NCD-RisC", paste(.cn$source, .cn$notes))) .fail("comment A: SBP not attributed to NCD-RisC")
+if (!any(grepl("Raised BP", .nm)))                 .fail("comment 3: raised-BP column missing")
+if (!any(grepl("Hypertension", .nm) & grepl("2021", .nm))) .fail("comment 3: NCD-RisC 2021 hypertension column missing")
+if (!any(grepl("population, 2026", .nm)))          .fail("comment 4: population column not labelled 2026")
+if (any(grepl("2030", .nm)))                       .fail("comment 4: a 2030 label remains in the country table")
+
+# 10. Comment 2: every table/figure has a unique, Word-safe bookmark distinct from its id.
+.bk <- c(vapply(TR$table_order, function(k) TR$tab[[k]]$bkm %||% "", character(1)),
+         vapply(TR$figure_order, function(k) TR$fig[[k]]$bkm %||% "", character(1)))
+if (any(!nzchar(.bk)))                       .fail("comment 2: an element has no bookmark")
+if (!all(grepl("^[A-Za-z][A-Za-z0-9_]*$", .bk))) .fail("comment 2: a bookmark is not Word-safe")
+if (anyDuplicated(.bk))                      .fail("comment 2: duplicate bookmark names")
+
+# 11. Comment 6: every table/figure source is EXACTLY the standardized string.
+.srcs <- c(vapply(TR$table_order, function(k) TR$tab[[k]]$source %||% "", character(1)),
+           vapply(TR$figure_order, function(k) TR$fig[[k]]$source %||% "", character(1)))
+if (!all(.srcs == "UW/RTSL sodium policy model")) .fail(paste(
+  "comment 6: non-standard source:", paste(unique(.srcs[.srcs != "UW/RTSL sodium policy model"]), collapse=" | ")))
+
+# 12. Comment 5: bundle distinguishes 2017 initialization from the 2019 epidemiologic seed.
+if (!identical(as.integer(TR$meta$initialization_year), 2017L)) .fail("comment 5: initialization_year is not 2017")
+if (!identical(as.integer(TR$meta$epidemiologic_seed_year), 2019L)) .fail("comment 5: epidemiologic_seed_year is not 2019")
+
+# 13. Comment 7: eff_evidence merged into eff_brief and removed; eff_brief has an evidence column.
+if ("eff_evidence" %in% TR$table_order) .fail("comment 7: eff_evidence table not removed")
+if (!any(grepl("Evidence", names(TR$tab$eff_brief$display)))) .fail("comment 7: eff_brief lacks an evidence column")
+
+# 14. Comment 9: no status words anywhere in the bundle's report-facing content.
+.blob <- tolower(paste(unlist(lapply(c(TR$tab, TR$fig), function(o)
+  c(o$title, o$notes, o$units, o$period, o$scenario_def, o$source, unlist(o$display)))),
+  paste(unlist(TR$dict), collapse = " "), paste(unlist(TR$meta$assumptions), collapse = " "),
+  collapse = " "))
+for (w in c("provisional", "preliminary", "pending", "exploratory"))
+  if (grepl(w, .blob)) .fail(paste0("comment 8/9: status word '", w, "' present in the bundle"))
+
+# 15. Totals reconcile: main table Total row == column sums of the country rows.
+.m <- TR$tab$main$raw
+if (!is.null(.m)) {
+  numc <- vapply(.m, is.numeric, logical(1)); trow <- grepl("^Total", .m[[1]])
+  if (any(trow) && any(numc)) {
+    got <- as.numeric(.m[trow, numc][1, ]); exp <- colSums(.m[!trow, numc, drop = FALSE])
+    if (any(abs(got - exp) > pmax(1, 1e-3 * abs(exp)))) .fail("main table Total row does not reconcile")
+  }
 }
+cat("technical-report QA: validated", length(TR$table_order), "tables /",
+    length(TR$figure_order), "figures.\n")
 ```
 
 `r if (knitr::is_latex_output()) "\\vspace{2em}"`
 
-**Sodium Interventions Model — Technical Report**
+**Sodium Interventions Model: Technical Report**
 
 *Projected cardiovascular health impact of national sodium-reduction policies in
 `r N$n_countries` priority countries, `r N$window`.*
@@ -101,94 +236,123 @@ Prepared by the University of Washington in partnership with Resolve to Save Liv
 `r format(Sys.Date(), "%B %Y")`.
 
 This report accompanies a companion results workbook. Health impacts are expressed
-as **cardiovascular deaths delayed** relative to a no-intervention baseline. Figures
-labelled *exploratory* or *provisional* rest on preliminary inputs and should not be
-read as settled estimates.
+as **cardiovascular deaths delayed** relative to a no-intervention baseline, and the
+results are point estimates.
 
 \newpage
 
 # 1. Executive summary
 
-## 1.1 Purpose and scope
+High salt intake is one of the largest and most modifiable drivers of cardiovascular
+disease. Across the `r N$n_countries` priority countries in this report, average sodium
+intake sits well above what the body needs, raising blood pressure and, with it, the
+risk of heart disease and stroke. Because the sodium-to-blood-pressure-to-disease chain
+is well established, population policies that lower sodium can prevent a large share of
+this burden, and most of the sodium people eat is within reach of practical, proven
+policy.
 
-This report estimates how many cardiovascular deaths could be **delayed** by a menu
-of population sodium-reduction policies in `r N$n_countries` priority countries —
-Bangladesh, Cameroon, China, Ethiopia, India, Malaysia, Nigeria, the Philippines,
-Thailand and Viet Nam — over the period **`r N$window`**. It documents the modelling
-approach, presents the projected health impacts, and states the assumptions and
-limitations plainly so that donors, policy leaders, public-health specialists and
-technical reviewers can judge the estimates on their merits.
+## 1.1 The problem and the opportunity
 
-The policies evaluated are public food procurement, mandatory sodium (salt) targets
-for packaged food, front-of-pack warning labelling, a salt tax (treated as
-exploratory), and low-sodium salt substitutes. Each is modelled through the same
-biological chain: less sodium — and, for salt substitutes, more potassium — lowers
-blood pressure, which lowers the incidence of four cardiovascular diseases.
+Raised blood pressure from excess dietary sodium is a leading, preventable cause of the
+four cardiovascular diseases modelled here: ischaemic heart disease, ischaemic stroke,
+intracerebral (haemorrhagic) stroke and hypertensive heart disease. Governments have
+several evidence-based levers, including reformulating packaged food, warning labels,
+healthier public food procurement, fiscal measures and low-sodium salt substitutes,
+each acting on a different part of the food supply. This report estimates how many
+cardiovascular deaths each lever, and a coordinated package, could delay in these ten
+countries.
 
-## 1.2 Headline findings
+## 1.2 What we modelled
+
+We evaluate five policies: public food procurement, mandatory sodium (salt) targets for
+packaged food, front-of-pack warning labelling, a salt tax, and low-sodium salt
+substitutes, across `r N$n_countries` priority countries (Bangladesh, Cameroon, China,
+Ethiopia, India, Malaysia, Nigeria, the Philippines, Thailand and Viet Nam) over
+**`r N$window`**. Each policy is modelled through the same biological chain: less sodium
+(and, for salt substitutes, more potassium) lowers blood pressure, which lowers the
+incidence of the four cardiovascular diseases. Each policy is applied only to the sodium
+sources it can realistically reach, so the estimates are conservative by construction.
+
+## 1.3 What the model indicates
 
 - A coordinated **package** of packaged-food and procurement policies is projected to
   delay about **`r N$pkg_m` million** cardiovascular deaths over `r N$window`
-  (`r N$pkg_pct` of baseline cardiovascular deaths in the window). The range across
-  salt-tax assumptions is **`r N$pkg_low_m`–`r N$pkg_high_m` million** (Table
-  \@ref(tab:main)).
+  (`r N$pkg_pct` of baseline cardiovascular deaths in the window); across salt-tax
+  assumptions the range is **`r N$pkg_low_m`–`r N$pkg_high_m` million**
+  (`r tab_link("main")`).
 - Among packaged-food policies, **mandatory salt targets** deliver the largest single
   benefit (**`r N$salt_targets_m` million** deaths delayed), followed by front-of-pack
   labelling (**`r N$fopl_m` million**).
 - **Low-sodium salt substitutes** show the largest *potential* of any single measure
   where discretionary salt dominates intake: whole-population use delays from
   **`r N$lss_s2_lo_m` million** at `r N$lss_s2_lo_pct` population uptake to
-  **`r N$lss_s2_hi_m` million** at `r N$lss_s2_hi_pct` uptake (Table \@ref(tab:lss),
-  Figure \@ref(fig:lss-uptake)). These are benefit-only estimates (see limitations).
-- Impact is highly concentrated: **China accounts for about `r N$china_share`** of the
-  package benefit, reflecting its population size and sodium burden.
+  **`r N$lss_s2_hi_m` million** at `r N$lss_s2_hi_pct` uptake (`r tab_link("lss")`,
+  `r fig_link("lss_uptake")`).
 
-## 1.3 Donor-facing takeaways
+## 1.4 How impact differs by country and sodium source
 
-- Sodium policy is a **high-return, low-cost** cardiovascular investment: a handful of
-  packaged-food policies, acting only on the sodium they can realistically reach,
-  still delay millions of deaths across ten countries.
-- The **best policy mix is country-specific.** Where packaged food dominates sodium
-  (for example China and Malaysia), reformulation and labelling matter most; where
-  discretionary salt dominates (for example Ethiopia, India, Bangladesh), low-sodium
-  salt substitutes carry the largest potential.
-- **Combining policies compounds the benefit** without double-counting, because each
-  policy is applied only to the sodium sources it can reach.
+Impact is highly concentrated: **China accounts for about `r N$china_share`** of the
+package benefit, and a small number of the largest countries account for roughly 80% of
+the ten-country total (`r fig_link("countries")`), reflecting population size and
+cardiovascular burden. The *best policy mix* also differs by country. Where packaged
+food is a large share of sodium (for example China and Malaysia), reformulation and
+labelling matter most; where discretionary salt dominates (for example Ethiopia, India
+and Bangladesh), low-sodium salt substitutes carry the largest potential. Combining
+policies compounds the benefit without double-counting, because each acts only on the
+sodium sources it can reach.
 
-## 1.4 How to interpret these estimates
+## 1.5 What decision-makers should take from this
+
+A small set of sodium policies, applied only to the sodium they can realistically reach,
+is still projected to delay millions of cardiovascular deaths across these ten countries.
+The evidence supports tailoring each country's policy portfolio to its own sodium
+profile rather than applying a single template, and pursuing packaged-food reformulation
+and low-sodium salt substitutes as complementary strategies. This analysis models health
+impact only; it does not estimate programme costs or cost-effectiveness.
+
+## 1.6 How to interpret these estimates, and main uncertainties
 
 These are **deaths delayed**, not permanently averted: the sodium-to-blood-pressure
 policies lower disease *incidence* while leaving case fatality unchanged, so they shift
-deaths later in life rather than removing them from the life table. Totals therefore
-depend on the accounting window (`r N$window`). Estimates are **point projections**
-without full uncertainty ranges; the salt-tax results are **exploratory**, and public
-food-procurement rests on a **provisional** coverage assumption. They are best read as
-the *relative* promise of each policy and the *order of magnitude* of the opportunity,
-not as precise forecasts.
+deaths later in life rather than removing them from the life table, and totals depend on
+the accounting window (`r N$window`). Estimates are **point projections** without full
+uncertainty ranges. The salt-tax (fiscal) results are **exploratory**: the tax
+pass-through, price elasticity, taxable share and substitution are uncertain, and
+broad-category demand responses may not transfer to high-sodium foods. Public food
+procurement is modelled using an assumed 5% institutional share of sodium, and
+salt-substitute figures are benefit-only because potential kidney-related harms of higher
+potassium are not modelled. The results are best read as the *relative* promise of each
+policy and the *order of magnitude* of the opportunity, not as precise forecasts.
 
 # 2. Modeling approach
 
 ## 2.1 Overall conceptual framework
 
 The model links each policy to health outcomes through one transparent causal chain
-(Figure \@ref(fig:framework)). A policy reduces sodium from the food sources it can
+(`r fig_link("framework")`). A policy reduces sodium from the food sources it can
 reach; the resulting fall in average sodium intake lowers systolic blood pressure;
 lower blood pressure reduces the yearly risk of developing four cardiovascular
 diseases; and a population model translates that lower risk into deaths delayed over
 time. Low-sodium salt substitutes add a second, blood-pressure-lowering channel
 through the potassium they contain.
 
-```{r framework, fig.cap=TR$fig$framework$title, out.width="100%"}
+`r fig_title("framework")`
+
+```{r framework, out.width="100%"}
 include_graphics(fig_path("framework"))
 ```
+
+`r fig_note("framework")`
 
 ## 2.2 Countries and populations included
 
 The model covers the ten RTSL priority countries and the adult population aged 20 and
-older in each (Table \@ref(tab:countries-tab)). Nigeria's sodium-source profile is used as
-a stand-in for Cameroon pending country-specific data. Although the client's draft
+older in each (`r tab_link("countries")`). Nigeria's sodium-source profile is applied to
+Cameroon because a country-specific profile was unavailable. Although the client's draft
 results tables omitted Viet Nam, it is a modelled priority country and is included
 throughout.
+
+`r tab_title("countries")`
 
 ```{r countries-tab}
 tr_tab("countries", "countries-tab")
@@ -198,30 +362,39 @@ tr_tab("countries", "countries-tab")
 
 ## 2.3 Baseline year, scale-up, projection horizon and results window
 
-The population model is seeded in **`r TR$meta$baseline_year`** and projected annually
-to **`r TR$meta$horizon`**. Policies scale up linearly over **`r N$scaleup`** and then
-hold at full implementation. Results are reported cumulatively over the window
+The population model is **initialised in `r TR$meta$initialization_year`** to establish
+the first transition history, with **`r TR$meta$epidemiologic_seed_year`** as the
+pre-pandemic epidemiologic seed (reference) year; it is then projected annually to
+**`r TR$meta$horizon`**. Policies scale up linearly over **`r N$scaleup`** and then hold
+at full implementation. Results are reported cumulatively over the window
 **`r N$window`**, with reference years `r N$results_years`.
 
 ## 2.4 Sodium-source framework
 
-Baseline sodium intake in each country is divided into **five sources** —
-discretionary salt (added at the table or in home cooking), packaged food, food from
-restaurants and vendors, food from public and institutional settings, and sodium
-inherent to unprocessed foods. These shares sum to 100% (Figure \@ref(fig:shares),
-Table \@ref(tab:source-shares)). Each policy is applied **only to the sources it can
-plausibly reach** — for example, salt targets and labelling to packaged food, salt
-substitutes to discretionary salt — and inherent sodium is never targeted. This
-"source-split" design keeps every policy's claimed effect anchored to the sodium it
-can actually influence (Figure \@ref(fig:map)).
+Baseline sodium intake in each country is divided into **five sources**: discretionary
+salt (added at the table or in home cooking), packaged food, food from restaurants and
+vendors, food from public and institutional settings, and sodium inherent to unprocessed
+foods. These shares sum to 100% (`r fig_link("shares")`, `r tab_link("source_shares")`).
+Each policy is applied **only to the sources it can plausibly reach** (for example, salt
+targets and labelling to packaged food, salt substitutes to discretionary salt), and
+inherent sodium is never targeted. This "source-split" design keeps every policy's
+claimed effect anchored to the sodium it can actually influence (`r fig_link("map")`).
 
-```{r shares, fig.cap=TR$fig$shares$title, out.width="90%"}
+`r fig_title("shares")`
+
+```{r shares, out.width="90%"}
 include_graphics(fig_path("shares"))
 ```
 
-```{r map, fig.cap=TR$fig$map$title, out.width="80%"}
+`r fig_note("shares")`
+
+`r fig_title("map")`
+
+```{r map, out.width="80%"}
 include_graphics(fig_path("map"))
 ```
+
+`r fig_note("map")`
 
 ## 2.5 Population and demographic assumptions
 
@@ -240,12 +413,14 @@ by-cause breakdown is shown.
 ## 2.7 Intervention effect assumptions
 
 Each policy has a documented **relative reduction** of its target sodium source at full
-implementation (Table \@ref(tab:eff-brief)); the evidence behind each value, including
-the blood-pressure step, is detailed in Appendix C (Table \@ref(tab:eff-evidence)).
-The sodium-to-blood-pressure relationship follows an established dose-response
-[@ettehad2016; @Filippini2020]: a reduction in sodium lowers systolic blood pressure by
-more in people with already-raised pressure than in those with normal pressure, and the
-lower pressure reduces disease incidence by cause.
+implementation, with the modelled effect, blood-pressure pathway and evidence source
+summarised together in `r tab_link("eff_brief")`. The sodium-to-blood-pressure
+relationship follows an established dose-response [@ettehad2016; @Filippini2020]: a
+reduction in sodium lowers systolic blood pressure by more in people with already-raised
+pressure than in those with normal pressure, and the lower pressure reduces disease
+incidence by cause.
+
+`r tab_title("eff_brief")`
 
 ```{r eff-brief}
 tr_tab("eff_brief")
@@ -269,24 +444,30 @@ substitutes are reported separately.
 
 Packaged food is a growing share of sodium intake in most of these countries. The model
 lets the packaged share **grow over time** along a country-specific trend, capped at
-80% of sodium sources, with the other sources rescaled so the five always sum to 100%
-(Figure \@ref(fig:packaged-time)). This changes the *composition* of sodium intake — and
-therefore the reach of packaged-food policies — while holding total baseline intake
-fixed [@vandevijvere2019; @marklund2022sources].
+80% of sodium sources (`r fig_link("packaged_time")`). Raising the packaged share is a
+**compositional reallocation, not an increase in intake**: the other four source shares
+are proportionally rescaled so that all five sources continue to sum to 100%. This
+guarantees that **total baseline sodium intake does not grow** in this module; only its
+source composition changes, which in turn shifts how much sodium packaged-food policies
+can reach over time [@vandevijvere2019; @marklund2022sources].
 
-```{r packaged-time, fig.cap=TR$fig$packaged_time$title, out.width="90%"}
+`r fig_title("packaged_time")`
+
+```{r packaged-time, out.width="90%"}
 include_graphics(fig_path("packaged_time"))
 ```
+
+`r fig_note("packaged_time")`
 
 ## 2.10 Low-sodium salt substitutes: the sodium and potassium pathway
 
 Low-sodium salt substitutes replace part of the sodium chloride in salt with potassium
 chloride (here `r N$lss_nacl` sodium chloride / `r N$lss_kcl` potassium chloride by
 mass). Switching discretionary salt to a substitute therefore does two things: it
-**removes sodium** and it **adds potassium** (Figure \@ref(fig:lss-pathway)). Both lower
-blood pressure — sodium through the same dose-response as the other policies, potassium
+**removes sodium** and it **adds potassium** (`r fig_link("lss_pathway")`). Both lower
+blood pressure: sodium through the same dose-response as the other policies, and potassium
 through a separate dose-response calibrated to measured potassium intake
-[@Filippini2020; @Reddin2023] — and the two effects are combined. This mechanistic
+[@Filippini2020; @Reddin2023]; the two effects are combined. This mechanistic
 approach follows the structure of a recent global modelling study [@huang2026]. We
 report it as the primary estimate for salt substitutes and use the SSaSS trial
 [@Neal2021LSSTrial] only as a benchmark for hypertension-targeted scenarios (Appendix
@@ -294,27 +475,45 @@ C). **Importantly, this is a benefit-only estimate**: the model does not include
 potential kidney-related harm of higher potassium, so salt-substitute benefits are not
 offset (see limitations).
 
-```{r lss-pathway, fig.cap=TR$fig$lss_pathway$title, out.width="100%"}
+`r fig_title("lss_pathway")`
+
+```{r lss-pathway, out.width="100%"}
 include_graphics(fig_path("lss_pathway"))
 ```
 
+`r fig_note("lss_pathway")`
+
 ## 2.11 High-level state-transition framework
 
-Health impact is projected with a **well–sick–dead** population model. Each year, some
-well people develop disease at the (now lower) incidence rate, some sick people die,
-and the surviving population ages by one year. Running the model with and without each
-policy, and taking the difference in deaths, yields the **deaths delayed**. The complete
-equations are in Appendix A.
+Health impact is projected with a **well–sick–dead** population model
+(`r fig_link("state_transition")`). Each year, some well people develop disease at the
+(now lower) incidence rate; some people living with disease die from it at the
+case-fatality rate; and both groups are subject to background mortality from other
+causes. The surviving population then ages by one year and a new cohort enters at age
+20. The process runs independently for each of the four cardiovascular causes. Running
+the model with and without each policy, and taking the difference in deaths, yields the
+**deaths delayed**. The complete equations are in Appendix A.
+
+`r fig_title("state_transition")`
+
+```{r state-transition, out.width="100%"}
+include_graphics(fig_path("state_transition"))
+```
+
+`r fig_note("state_transition")`
 
 # 3. Results
 
 ## 3.1 Deaths delayed by intervention and country
 
-Table \@ref(tab:main) reports deaths delayed by country for each packaged-food and
+`r tab_link("main")` reports deaths delayed by country for each packaged-food and
 procurement policy, for the salt tax at low, base and high assumptions, and for the full
 package at each salt-tax assumption. The country totals reconcile to the "Total" row
-within rounding. Figure \@ref(fig:headline) ranks the interventions overall, and Figure
-\@ref(fig:countries) shows the full package by country.
+within rounding. `r fig_link("headline")` ranks the interventions overall, and
+`r fig_link("countries")` shows how that impact concentrates across countries (Section
+3.5).
+
+`r tab_title("main")`
 
 ```{r main}
 tr_tab("main")
@@ -322,38 +521,40 @@ tr_tab("main")
 
 `r tab_note("main")`
 
-```{r headline, fig.cap=TR$fig$headline$title, out.width="85%"}
+`r fig_title("headline")`
+
+```{r headline, out.width="85%"}
 include_graphics(fig_path("headline"))
 ```
 
+`r fig_note("headline")`
+
 ## 3.2 Fiscal-policy variants and corresponding package totals
 
-The salt tax is modelled as an **exploratory** pathway from tax rate to consumer price,
-demand response and, finally, reduced packaged sodium (Figure \@ref(fig:fiscal-pathway);
-Appendix C, Table \@ref(tab:fiscal-path)). It ranges from **`r N$fiscal_low_m` million**
+The salt tax is modelled as a pathway from tax rate to consumer price, demand response
+and, finally, reduced packaged sodium (the pathway and its parameters are detailed in
+Appendix C, `r tab_link("fiscal_path")`). It ranges from **`r N$fiscal_low_m` million**
 deaths delayed under conservative assumptions to **`r N$fiscal_high_m` million** under
 optimistic ones, with a base case of **`r N$fiscal_base_m` million**. Because deaths
 delayed do not simply add across policies, the package total is re-computed for each tax
-assumption; these are the three "Package total" columns of Table \@ref(tab:main),
-ranging from **`r N$pkg_low_m`** to **`r N$pkg_high_m` million**.
-
-```{r fiscal-pathway, fig.cap=TR$fig$fiscal_pathway$title, out.width="100%"}
-include_graphics(fig_path("fiscal_pathway"))
-```
+assumption; these are the three "Package total" columns of `r tab_link("main")`, ranging
+from **`r N$pkg_low_m`** to **`r N$pkg_high_m` million**.
 
 ## 3.3 Low-sodium salt substitutes: uptake and hypertension targeting
 
-Table \@ref(tab:lss) reports salt-substitute results: whole-population use (Scenario 2)
-at population uptake levels of 10%, 20%, 30%, 40% and 50%, and two
-hypertension-targeted scenarios — adults with **diagnosed** hypertension (Scenario 4)
-and adults with **treated** hypertension (Scenario 5). Whole-population benefit scales
-almost linearly with uptake (Figure \@ref(fig:lss-uptake)), reaching
+`r tab_link("lss")` reports salt-substitute results: whole-population use (Scenario 2)
+at population uptake levels of 10%, 20%, 30%, 40% and 50%, and two hypertension-targeted
+scenarios, namely adults with **diagnosed** hypertension (Scenario 4) and adults with
+**treated** hypertension (Scenario 5). Whole-population benefit scales almost linearly
+with uptake (`r fig_link("lss_uptake")`), reaching
 **`r N$lss_s2_hi_m` million** deaths delayed at `r N$lss_s2_hi_pct` uptake. The
 hypertension-targeted scenarios deliver **`r N$lss_s4_m` million** (diagnosed) and
-**`r N$lss_s5_m` million** (treated) — a large benefit from a much smaller target
-group, because risk is concentrated in people with high blood pressure. These figures
+**`r N$lss_s5_m` million** (treated), a large benefit from a much smaller target group,
+because risk is concentrated in people with high blood pressure. These figures
 follow the mechanistic sodium-and-potassium pathway, not the salt-substitute trial's
 relative risks.
+
+`r tab_title("lss")`
 
 ```{r lss}
 tr_tab("lss")
@@ -361,48 +562,57 @@ tr_tab("lss")
 
 `r tab_note("lss")`
 
-```{r lss-uptake, fig.cap=TR$fig$lss_uptake$title, out.width="85%"}
+`r fig_title("lss_uptake")`
+
+```{r lss-uptake, out.width="85%"}
 include_graphics(fig_path("lss_uptake"))
 ```
+
+`r fig_note("lss_uptake")`
 
 ## 3.4 Which interventions have the greatest impact
 
 Across the ten countries, **mandatory salt targets** are the single most impactful
 packaged-food policy, because they act on the whole packaged category at a substantial
 reduction. **Front-of-pack labelling** is next. **Public food procurement** is the
-smallest of the packaged-and-procurement policies, reflecting the modest and still
-**provisional** share of sodium that public institutions reach. The **salt tax** falls
-between labelling and procurement but is **exploratory**. **Low-sodium salt substitutes**
-stand apart: where discretionary salt dominates intake, their whole-population potential
-exceeds the entire packaged-food package — a key strategic finding, subject to the
-benefit-only caveat and to achieving real-world uptake and adherence.
+smallest of the packaged-and-procurement policies, reflecting the modest share of sodium
+that public institutions reach under the assumed 5% institutional share. The **salt tax**
+falls between labelling and procurement. **Low-sodium salt substitutes** stand apart:
+where discretionary salt dominates intake, their whole-population potential exceeds the
+entire packaged-food package, a key strategic finding, subject to the benefit-only caveat
+and to achieving real-world uptake and adherence.
 
 ## 3.5 Important cross-country differences
 
 The ranking of policies flips with the local sodium profile. In China and Malaysia,
 where packaged food is a large share of sodium, reformulation and labelling dominate. In
 Ethiopia, India and Bangladesh, where discretionary salt dominates, salt substitutes
-carry by far the most potential. Absolute impact tracks population and cardiovascular
-burden: China and India account for most deaths delayed under every policy, while the
-smallest countries contribute proportionally less (Figure \@ref(fig:countries)).
+carry by far the most potential. Absolute impact, however, tracks population and
+cardiovascular burden and is highly concentrated: ranked from largest to smallest, a
+small number of the biggest countries, led by China and India, account for roughly 80%
+of the ten-country full-package total, as the cumulative line of the Pareto chart shows
+(`r fig_link("countries")`). This concentration is why a few large countries drive the
+headline totals, even though the *best policy mix* is country-specific.
 
-```{r countries, fig.cap=TR$fig$countries$title, out.width="80%"}
+`r fig_title("countries")`
+
+```{r countries, out.width="95%"}
 include_graphics(fig_path("countries"))
 ```
+
+`r fig_note("countries")`
 
 ## 3.6 Full-package findings
 
 The full package delays about **`r N$pkg_m` million** cardiovascular deaths
-(`r N$pkg_pct` of baseline), the great majority in the largest countries. By cause, the
-package's benefit is led by **`r N$top_cause`** (**`r N$top_cause_m` million**,
-`r N$top_cause_pct` of the package total), reflecting the strong blood-pressure link of
-stroke (Figure \@ref(fig:bycause); Table \@ref(tab:bycause-tab)). The full package excludes
-low-sodium salt substitutes, which are reported separately; adding them where
-discretionary salt is large would raise the total substantially.
+(`r N$pkg_pct` of baseline), the great majority in the largest countries. As
+`r tab_link("bycause")` shows, the package's benefit is led by **`r N$top_cause`**
+(**`r N$top_cause_m` million**, `r N$top_cause_pct` of the package total), reflecting the
+strong blood-pressure link of stroke. The full package excludes low-sodium salt
+substitutes, which are reported separately; adding them where discretionary salt is large
+would raise the total substantially.
 
-```{r bycause, fig.cap=TR$fig$bycause$title, out.width="75%"}
-include_graphics(fig_path("bycause"))
-```
+`r tab_title("bycause")`
 
 ```{r bycause-tab}
 tr_tab("bycause", "bycause-tab")
@@ -413,20 +623,23 @@ tr_tab("bycause", "bycause-tab")
 ## 3.7 Donor-relevant takeaways, without overstating precision
 
 Sodium policy offers a large, credible cardiovascular return across these ten countries.
-The estimates here are deliberately conservative in construction — each policy reaches
-only the sodium it can — and they still point to millions of deaths delayed. They are
+The estimates here are deliberately conservative in construction (each policy reaches
+only the sodium it can) and they still point to millions of deaths delayed. They are
 projections, not guarantees: the ranges shown for the salt tax and the salt-substitute
-uptake sweep are the honest expression of that uncertainty, and provisional or
-exploratory items are labelled as such.
+uptake sweep are the honest expression of that uncertainty.
 
 # 4. Assumptions and limitations
 
-The main assumptions and limitations are summarised in Table \@ref(tab:limitations) and
+The main assumptions and limitations are summarised in `r tab_link("limitations")` and
 expanded below.
+
+`r tab_title("limitations")`
 
 ```{r limitations}
 tr_tab("limitations")
 ```
+
+`r tab_note("limitations")`
 
 - **Deaths delayed, not averted.** The sodium-to-blood-pressure policies lower incidence
   but not case fatality, so they postpone deaths rather than prevent them outright;
@@ -434,17 +647,16 @@ tr_tab("limitations")
 - **Salt substitutes are benefit-only.** No kidney-related harm of higher potassium is
   modelled, so salt-substitute benefits are not offset and should be read as an upper
   part of the plausible range where such risks matter.
-- **The salt tax is exploratory.** Its price, demand and substitution assumptions are
-  uncertain, and broad-category demand responses may not transfer to high-sodium foods.
-- **Public food procurement is provisional.** It uses a preliminary institutional-reach
-  assumption pending adults-only country data.
+- **The salt tax.** Its price, demand and substitution assumptions are uncertain, and
+  broad-category demand responses may not transfer to high-sodium foods.
+- **Public food procurement.** It is modelled using an assumed 5% institutional share of
+  sodium.
 - **Some inputs are held constant or use proxies.** Hypertension diagnosis and treatment
   shares are age-standardised and held after their source year; potassium intake for two
-  countries uses a regional average; several source-share profiles are provisional; and
-  future packaged-food growth is an extrapolation.
+  countries uses a regional average; several source-share profiles use proxy or default
+  values; and future packaged-food growth is an extrapolation.
 - **Uncertainty is not fully propagated.** Results are point estimates; no full
   probabilistic sensitivity analysis is run.
-- **Mass-media campaigns are excluded** from the reported scenarios and the package.
 
 # 5. Conclusion
 
@@ -453,10 +665,10 @@ projected to delay on the order of **`r N$pkg_m` million** cardiovascular deaths
 `r N$window`, and low-sodium salt substitutes could deliver more still where
 discretionary salt dominates intake. The most effective mix differs by country, which
 argues for tailoring policy portfolios to each country's sodium profile rather than
-applying a single template. With transparent assumptions and clearly-flagged provisional
-elements, these estimates make a strong, evidence-based case for sustained investment in
-population sodium reduction — while leaving room for the better data and fuller
-uncertainty analysis that would sharpen the numbers.
+applying a single template. With transparent assumptions clearly stated, these estimates
+make a strong, evidence-based case for sustained investment in population sodium
+reduction, while leaving room for the better data and fuller uncertainty analysis that
+would sharpen the numbers.
 
 # 6. References
 
@@ -470,7 +682,7 @@ $c$'s sodium intake from source $s$ in year $t$ (with $\sum_s w_{c,s,t}=1$), and
 $e_{i,s}$ be the fractional reduction that policy $i$ applies to source $s$. For a set of
 policies $\mathcal{P}$, the combined reduction of source $s$ is
 \begin{equation}
-r_{c,s,t}=1-\prod_{i\in\mathcal{P}}\bigl(1-e_{i,s}\bigr),(\#eq:compose)
+r_{c,s,t}=1-\prod_{i\in\mathcal{P}}\left(1-e_{i,s}\right),(\#eq:compose)
 \end{equation}
 and the total sodium reduction fraction is
 \begin{equation}
@@ -483,7 +695,7 @@ exceed a 100% reduction.
 scaled-up reduction $\Delta\text{Na}=\eta\,\text{Na}^0$ (subject to a 2 g/day minimum
 intake floor), the systolic blood-pressure reduction is
 \begin{equation}
-\Delta\text{SBP}=\bigl(2.8\,h+1.0\,(1-h)\bigr)\,\Delta\text{Na},(\#eq:sbp)
+\Delta\text{SBP}=\left(2.8\,h+1.0\,(1-h)\right)\,\Delta\text{Na},(\#eq:sbp)
 \end{equation}
 where $h$ is the fraction of the age–sex group with raised blood pressure.
 
@@ -491,7 +703,7 @@ where $h$ is the fraction of the age–sex group with raised blood pressure.
 incidence for cause $k$ is decomposed using relative-risk weights and then reduced in
 proportion to $\Delta\text{SBP}$:
 \begin{equation}
-\text{IR}^{\text{new}}_{k}=\sum_b \pi_b\, \text{IR}_{b,k}\Bigl(1-(1-RR^{10}_{b,k})\,\tfrac{\Delta\text{SBP}}{10}\Bigr),(\#eq:ir)
+\text{IR}^{\text{new}}_{k}=\sum_b \pi_b\, \text{IR}_{b,k}\left(1-(1-RR^{10}_{b,k})\,\frac{\Delta\text{SBP}}{10}\right),(\#eq:ir)
 \end{equation}
 where $\pi_b$ is the share of the group in band $b$ and $RR^{10}_{b,k}$ the relative risk
 per 10 mmHg. Case fatality is unchanged for these policies.
@@ -509,13 +721,15 @@ counts, incidence $\text{IR}$, case fatality $\text{CF}$ and background mortalit
 \begin{aligned}
 S_t &= S_{t-1}(1-\text{CF}-m)+W_{t-1}\,\text{IR},\\
 D_t &= S_{t-1}\,\text{CF},\\
-W_t &= P_t - S_t - \textstyle\sum_k D_{t}.
+W_t &= P_t - S_t - \sum_k D_{t}.
 \end{aligned}(\#eq:states)
 \end{equation}
 **Deaths delayed** for a scenario are baseline deaths minus scenario deaths, summed over
 the results window.
 
 # Appendix B: Complete scenario definitions
+
+`r tab_title("scn_def")`
 
 ```{r scn-def}
 tr_tab("scn_def")
@@ -525,32 +739,29 @@ tr_tab("scn_def")
 
 # Appendix C: Detailed intervention methods and effect-size evidence
 
-Table \@ref(tab:eff-evidence) lists each effect size with its evidence source. Modelled
-values follow the production configuration and may differ from a single published study
-(for example, salt targets are modelled at 20% against roughly 15% observed in the
-United Kingdom over nine years [@he2013]). Public food procurement draws on institutional
-cafeteria studies [@gase2011]; front-of-pack warning labelling on the Chilean evaluation
-[@taillie2024]; and the salt tax on Philippine tax modelling [@saxena2025] with support
-from Australian work [@cobiac2017].
+Each effect size and its evidence source are summarised alongside the intervention in the
+body table (`r tab_link("eff_brief")`). Modelled values follow the production
+configuration and may differ from a single published study (for example, salt targets are
+modelled at 20% against roughly 15% observed in the United Kingdom over nine years
+[@he2013]). Public food procurement draws on institutional cafeteria studies [@gase2011];
+front-of-pack warning labelling on the Chilean evaluation [@taillie2024]; and the salt tax
+on Philippine tax modelling [@saxena2025] with support from Australian work [@cobiac2017].
 
-```{r eff-evidence}
-tr_tab("eff_evidence")
-```
+The salt-tax pathway (`r tab_link("fiscal_path")`) does not assume that a 10% tax yields a
+10% sodium reduction, nor that all packaged sodium is taxable. The salt-substitute
+benchmark using the SSaSS trial's stroke relative risks [@Neal2021LSSTrial] is shown
+alongside the mechanistic estimate for the hypertension-targeted scenarios in
+`r tab_link("nak_ssass")`; the two are distinct pathways and are never combined.
 
-`r tab_note("eff_evidence")`
-
-The salt tax is an **exploratory** pathway (Table \@ref(tab:fiscal-path)); it does not
-assume that a 10% tax yields a 10% sodium reduction, nor that all packaged sodium is
-taxable. The salt-substitute benchmark using the SSaSS trial's stroke relative risks
-[@Neal2021LSSTrial] is shown alongside the mechanistic estimate for the
-hypertension-targeted scenarios in Table \@ref(tab:nak-ssass); the two are distinct
-pathways and are never combined.
+`r tab_title("fiscal_path")`
 
 ```{r fiscal-path}
 tr_tab("fiscal_path")
 ```
 
 `r tab_note("fiscal_path")`
+
+`r tab_title("nak_ssass")`
 
 ```{r nak-ssass}
 tr_tab("nak_ssass")
@@ -561,9 +772,11 @@ tr_tab("nak_ssass")
 # Appendix D: Sodium-source definitions and country assumptions
 
 The five sodium sources are discretionary salt, packaged food, restaurant and vendor
-food, public and institutional food, and inherent sodium. Table
-\@ref(tab:source-shares) gives each country's base-year shares; several are provisional,
-and any country without its own profile would use a default average.
+food, public and institutional food, and inherent sodium. `r tab_link("source_shares")`
+gives each country's base-year shares; where a country lacks its own profile, a proxy or
+default average is used.
+
+`r tab_title("source_shares")`
 
 ```{r source-shares}
 tr_tab("source_shares")
@@ -575,10 +788,12 @@ tr_tab("source_shares")
 
 Hypertension diagnosis and treatment shares that size the salt-substitute
 hypertension-targeted scenarios come from the NCD Risk Factor Collaboration
-[@ncdrisc2021] (Table \@ref(tab:ncd-elig)); baseline potassium intake from a global
-pooled analysis [@Reddin2023] (Table \@ref(tab:baseline-k)); and the packaged-food growth
-trend from commercial sales data [@marklund2022sources] (Table \@ref(tab:pkg-trend)). Key
-model inputs and parameters are summarised in Table \@ref(tab:key-inputs).
+[@ncdrisc2021] (`r tab_link("ncd_elig")`); baseline potassium intake from a global
+pooled analysis [@Reddin2023] (`r tab_link("baseline_k")`); and the packaged-food growth
+trend from commercial sales data [@marklund2022sources] (`r tab_link("pkg_trend")`). Key
+model inputs and parameters are summarised in `r tab_link("key_inputs")`.
+
+`r tab_title("ncd_elig")`
 
 ```{r ncd-elig}
 tr_tab("ncd_elig")
@@ -586,17 +801,23 @@ tr_tab("ncd_elig")
 
 `r tab_note("ncd_elig")`
 
+`r tab_title("baseline_k")`
+
 ```{r baseline-k}
 tr_tab("baseline_k")
 ```
 
 `r tab_note("baseline_k")`
 
+`r tab_title("pkg_trend")`
+
 ```{r pkg-trend}
 tr_tab("pkg_trend")
 ```
 
 `r tab_note("pkg_trend")`
+
+`r tab_title("key_inputs")`
 
 ```{r key-inputs}
 tr_tab("key_inputs")
@@ -606,17 +827,21 @@ tr_tab("key_inputs")
 
 # Appendix F: Low-sodium salt substitute parameters and pathway quantities
 
-Table \@ref(tab:lss-audit) reports the sodium displaced, potassium added and
+`r tab_link("lss_audit")` reports the sodium displaced, potassium added and
 blood-pressure change per country and sex at a representative whole-population coverage;
-these quantities scale linearly with coverage. Table \@ref(tab:huang) positions the
+these quantities scale linearly with coverage. `r tab_link("huang")` positions the
 mechanistic salt-substitute model against the recent global study whose structure it
 follows [@huang2026].
+
+`r tab_title("lss_audit")`
 
 ```{r lss-audit}
 tr_tab("lss_audit")
 ```
 
 `r tab_note("lss_audit")`
+
+`r tab_title("huang")`
 
 ```{r huang}
 tr_tab("huang")
@@ -626,11 +851,12 @@ tr_tab("huang")
 
 # Appendix G: Packaged-food trend method
 
-The packaged share of sodium grows along a country-specific annual rate (Table
-\@ref(tab:pkg-trend)), capped at 80% of sodium sources, held constant after 2030, with
-the other four sources rescaled each year so the five sum to 100%. Total baseline sodium
-intake is held fixed — only the *composition* changes — so the trend changes the reach of
-packaged-food policies over time rather than the underlying intake.
+The packaged share of sodium grows along a country-specific annual rate
+(`r tab_link("pkg_trend")`), capped at 80% of sodium sources and held constant after 2030.
+This is a **compositional reallocation**: each year the other four source shares are
+rescaled proportionally so the five continue to sum to 100%. This guarantees that **total
+baseline sodium intake does not grow** (only its source composition changes), so the trend
+alters the reach of packaged-food policies over time rather than the underlying intake.
 
 # Appendix H: Validation and consistency checks
 
@@ -645,7 +871,9 @@ report match the companion workbook exactly. As an external cross-check, the ful
 (`r N$bench_cur_m` million deaths delayed across the modelled countries) is compared with
 a previous estimate for a uniform 30% sodium cut (`r N$bench_prev_m` million); the current
 package is expectedly smaller because it reaches only the sodium its policies can affect
-(Table \@ref(tab:benchmark)).
+(`r tab_link("benchmark")`).
+
+`r tab_title("benchmark")`
 
 ```{r benchmark}
 tr_tab("benchmark")
@@ -655,15 +883,19 @@ tr_tab("benchmark")
 
 # Appendix I: Supplemental tables and figures
 
-Table \@ref(tab:scn-summary) gives cumulative deaths delayed by scenario across all
-countries and causes, and Table \@ref(tab:saxena) positions the exploratory salt-tax
-model against the study that anchors it [@saxena2025].
+`r tab_link("scn_summary")` gives cumulative deaths delayed by scenario across all
+countries and causes, and `r tab_link("saxena")` positions the salt-tax model against the
+study that anchors it [@saxena2025].
+
+`r tab_title("scn_summary")`
 
 ```{r scn-summary}
 tr_tab("scn_summary")
 ```
 
 `r tab_note("scn_summary")`
+
+`r tab_title("saxena")`
 
 ```{r saxena}
 tr_tab("saxena")

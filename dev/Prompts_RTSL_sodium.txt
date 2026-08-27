@@ -1,3 +1,37 @@
+# Task, improve technical report
+
+Write a prompt to ask claude code to. Modify the report/technical_report.RMD document
+and reports/report.RMD to
+
+1 Improve narrative quality, its quite descriptive and this is a technical but still an executive gih quality document. This is a product for resolve to save lives,
+so give it a look to their web site and follow narrative convention. 
+2 Align the colors, tables and figure design to resolve to save lives 
+3 Implement the comments make in the attached word documments
+4. Every figure and table should include the title above and notes below that describe what is being presented and provide readers context
+
+mODIFY ONLY report/technical_report.RMD document and report/report.RMD, NOT OTHER file.
+all elements should be produced in reports/report.RMD and consumed by report/technical_report.RMD
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Task: Create 07_run_interventions.R (source-specific sodium interventions)
 
 ## Context
